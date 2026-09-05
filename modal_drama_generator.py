@@ -222,6 +222,107 @@ def generate_scene_image(visual_prompt: str, index: int) -> bytes:
     image_url = prediction.output[0]
     return requests.get(image_url, timeout=120).content
 
+
+# SadTalker on Replicate: audio-driven "stylized" talking-face from one image.
+SADTALKER_VERSION = "a519cc0cfebaaeade068b23899165a11ec76aaa1d2b313d40d214f204ec957a3"
+
+
+@app.function(
+    secrets=[modal.Secret.from_name("replicate-secret"), modal.Secret.from_name("r2-credentials")],
+    timeout=900,
+)
+def lipsync_scene(image_bytes: bytes, audio_bytes: bytes, index: int) -> bytes:
+    """Animates a character portrait to speak the given voiceover, via SadTalker.
+
+    SadTalker wants the audio as .wav and both inputs as URLs, so we transcode the
+    ElevenLabs mp3 with ffmpeg and stage both files in R2, then poll the prediction
+    and return the resulting talking-head mp4 bytes (audio already baked in).
+    """
+    import io
+    import time
+    import subprocess
+    import boto3
+    import requests
+    from replicate.client import Client
+
+    # ElevenLabs returns mp3; SadTalker wants wav.
+    with open(f"/tmp/a{index}.mp3", "wb") as f:
+        f.write(audio_bytes)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", f"/tmp/a{index}.mp3", "-ar", "16000", f"/tmp/a{index}.wav"],
+        check=True, capture_output=True,
+    )
+    with open(f"/tmp/a{index}.wav", "rb") as f:
+        wav_bytes = f.read()
+
+    # Stage the image + wav in R2 so SadTalker can fetch them by URL.
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=os.environ["R2_ENDPOINT_URL"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    bucket = os.environ["R2_BUCKET_NAME"]
+    base = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
+    img_key, wav_key = f"tmp/ls_{index}.png", f"tmp/ls_{index}.wav"
+    s3.put_object(Bucket=bucket, Key=img_key, Body=image_bytes, ContentType="image/png")
+    s3.put_object(Bucket=bucket, Key=wav_key, Body=wav_bytes, ContentType="audio/wav")
+
+    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"])
+    prediction = client.predictions.create(
+        version=SADTALKER_VERSION,
+        input={
+            "source_image": f"{base}/{img_key}",
+            "driven_audio": f"{base}/{wav_key}",
+            "preprocess": "full",       # keep the whole framed portrait, not just a crop
+            "still_mode": True,         # gentle head motion, steadier for stylized faces
+            "use_enhancer": True,
+        },
+    )
+
+    deadline = time.time() + 780
+    while prediction.status not in ("succeeded", "failed", "canceled"):
+        if time.time() > deadline:
+            raise RuntimeError(f"SadTalker scene {index} timed out (status={prediction.status})")
+        time.sleep(3)
+        prediction.reload()
+
+    if prediction.status != "succeeded":
+        raise RuntimeError(f"SadTalker scene {index} {prediction.status}: {prediction.error}")
+
+    return requests.get(prediction.output, timeout=180).content
+
+
+@app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=120)
+def upload_bytes_to_r2(data: bytes, object_name: str, content_type: str = "video/mp4") -> str:
+    """Uploads raw bytes to R2 and returns the public URL."""
+    import boto3
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=os.environ["R2_ENDPOINT_URL"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    s3.put_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=object_name, Body=data, ContentType=content_type)
+    return f"{os.environ['R2_PUBLIC_BASE_URL'].rstrip('/')}/{object_name}"
+
+
+@app.local_entrypoint()
+def test_lipsync(
+    prompt: str = "expressive stylized cartoon portrait of a young woman with long dark hair, semi-realistic illustration, clear frontal face, upper body, soft studio lighting, vertical 9:16",
+    line: str = "You promised you'd never lie to me. And now I know the truth.",
+):
+    """One-scene proof of the talking-cartoon approach: portrait + voiceover -> SadTalker.
+    Run: modal run modal_drama_generator.py::test_lipsync
+    """
+    img = generate_scene_image.remote(prompt, 0)
+    audio = generate_voiceover.remote(line, "en", 0)
+    clip = lipsync_scene.remote(img, audio, 0)
+    url = upload_bytes_to_r2.remote(clip, "tests/lipsync_test.mp4")
+    print(f"✅ LIPSYNC TEST VIDEO: {url}")
+
+
 # ==========================================
 # 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
