@@ -173,27 +173,32 @@ def generate_scene_image(visual_prompt: str, index: int) -> bytes:
     this pipeline's volume, since a hosted API avoids per-container cold starts.
     """
     import time
-    import replicate
+    import requests
     from replicate.client import Client
 
-    # Generous timeout: replicate.run() holds the request open until the image is
-    # ready, and FLUX has a cold-boot delay on the first call of a batch.
-    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"], timeout=300)
+    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"])
 
-    last_error = None
-    for attempt in range(3):
-        try:
-            output = client.run(
-                "black-forest-labs/flux-schnell",
-                input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
-            )
-            return output[0].read()
-        except Exception as e:  # transient read timeouts / cold-boot flakiness
-            last_error = e
-            print(f"Scene {index} image attempt {attempt + 1} failed: {e}")
-            time.sleep(5)
+    # Create the prediction, then poll with quick GETs instead of holding one
+    # long HTTP request open (which is what was hitting httpx ReadTimeout).
+    model = client.models.get("black-forest-labs/flux-schnell")
+    prediction = client.predictions.create(
+        version=model.latest_version.id,
+        input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
+    )
 
-    raise RuntimeError(f"Replicate image generation failed for scene {index} after 3 attempts") from last_error
+    deadline = time.time() + 240
+    while prediction.status not in ("succeeded", "failed", "canceled"):
+        if time.time() > deadline:
+            raise RuntimeError(f"Replicate image for scene {index} timed out (status={prediction.status})")
+        time.sleep(2)
+        prediction.reload()
+
+    if prediction.status != "succeeded":
+        raise RuntimeError(f"Replicate image for scene {index} {prediction.status}: {prediction.error}")
+
+    # flux-schnell returns a list of image URLs; download the first.
+    image_url = prediction.output[0]
+    return requests.get(image_url, timeout=120).content
 
 
 @app.function(gpu="A100", volumes={"/models": model_volume}, timeout=600)
