@@ -271,6 +271,43 @@ def animate_scene_image(image_bytes: bytes, index: int) -> bytes:
 # 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
 
+def _make_watermark(text: str, duration: float):
+    """Builds a bottom-right watermark clip using Pillow (avoids ImageMagick)."""
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    from moviepy.editor import ImageClip
+
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+    except OSError:
+        font = ImageFont.load_default()
+
+    # Measure the text, then draw white text with a black outline on a transparent canvas.
+    dummy = Image.new("RGBA", (1, 1))
+    box = ImageDraw.Draw(dummy).textbbox((0, 0), text, font=font, stroke_width=2)
+    pad = 8
+    w, h = box[2] - box[0] + pad * 2, box[3] - box[1] + pad * 2
+
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text(
+        (pad - box[0], pad - box[1]), text, font=font,
+        fill=(255, 255, 255, 200), stroke_width=2, stroke_fill=(0, 0, 0, 200),
+    )
+
+    # Split RGB + alpha explicitly so the transparency survives compositing.
+    arr = np.array(img)
+    rgb, alpha = arr[:, :, :3], arr[:, :, 3] / 255.0
+    mask = ImageClip(alpha, ismask=True).set_duration(duration)
+
+    return (
+        ImageClip(rgb)
+        .set_duration(duration)
+        .set_mask(mask)
+        .set_position(("right", "bottom"))
+        .margin(right=20, bottom=30, opacity=0)
+    )
+
+
 @app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=600)
 def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
     """Merges audio/video, enforces the 63-second rule, burns the watermark, and
@@ -283,7 +320,7 @@ def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: s
     import boto3
     from moviepy.editor import (
         VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips,
-        concatenate_audioclips, CompositeVideoClip, TextClip
+        concatenate_audioclips, CompositeVideoClip
     )
 
     # Materialize the incoming bytes into this container's own /tmp.
@@ -318,17 +355,11 @@ def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: s
 
     final_video = final_video.set_audio(final_audio).set_duration(final_duration)
 
+    # Render the watermark with Pillow (not MoviePy's TextClip, which shells out
+    # to ImageMagick — blocked by Debian's default security policy.xml).
     watermark_text = os.environ.get("WATERMARK_TEXT", "@YourBrand")
-    watermark = (
-        TextClip(watermark_text, fontsize=28, color="white", font="Arial-Bold",
-                 stroke_color="black", stroke_width=1)
-        .set_opacity(0.75)
-        .set_duration(final_duration)
-        .margin(right=20, bottom=30, opacity=0)
-        .set_position(("right", "bottom"))
-    )
-
-    final_video = CompositeVideoClip([final_video, watermark])
+    watermark_clip = _make_watermark(watermark_text, final_duration)
+    final_video = CompositeVideoClip([final_video, watermark_clip])
 
     final_path = f"/tmp/{output_filename}"
     final_video.write_videofile(final_path, codec="libx264", audio_codec="aac", fps=24, preset="fast", logger=None)
