@@ -7,3 +7,6 @@ venv/
 .DS_Store
 .Sectret/
 .claude/
+.APIs.txt
+*.APIs.txt
+Private Branding/
