@@ -165,20 +165,35 @@ def generate_voiceover(text: str, language: str, index: int) -> str:
 # 4. VISUALS: STILL IMAGE (API) -> ANIMATED VIDEO (self-hosted)
 # ==========================================
 
-@app.function(secrets=[modal.Secret.from_name("replicate-secret")], timeout=120)
+@app.function(secrets=[modal.Secret.from_name("replicate-secret")], timeout=300)
 def generate_scene_image(visual_prompt: str, index: int) -> bytes:
     """Generates a realistic vertical still image for a scene via Replicate's hosted FLUX.1-schnell.
 
     Cheap and high-quality relative to self-hosting an image model on Modal at
     this pipeline's volume, since a hosted API avoids per-container cold starts.
     """
+    import time
     import replicate
+    from replicate.client import Client
 
-    output = replicate.run(
-        "black-forest-labs/flux-schnell",
-        input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
-    )
-    return output[0].read()
+    # Generous timeout: replicate.run() holds the request open until the image is
+    # ready, and FLUX has a cold-boot delay on the first call of a batch.
+    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"], timeout=300)
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            output = client.run(
+                "black-forest-labs/flux-schnell",
+                input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
+            )
+            return output[0].read()
+        except Exception as e:  # transient read timeouts / cold-boot flakiness
+            last_error = e
+            print(f"Scene {index} image attempt {attempt + 1} failed: {e}")
+            time.sleep(5)
+
+    raise RuntimeError(f"Replicate image generation failed for scene {index} after 3 attempts") from last_error
 
 
 @app.function(gpu="A100", volumes={"/models": model_volume}, timeout=600)
