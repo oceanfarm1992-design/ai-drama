@@ -391,8 +391,13 @@ def _save_series_state(language: str, episode_number: int, script_data: dict) ->
     }
 
 
-def run_full_pipeline(topic_seed: str, language: str) -> dict:
-    """Shared orchestration logic used by both the CLI entrypoint and the HTTP trigger below."""
+def run_full_pipeline(topic_seed: str, language: str, publish: bool = True) -> dict:
+    """Shared orchestration logic used by both the CLI entrypoint and the HTTP trigger below.
+
+    When `publish` is False, everything runs (script -> voice -> photos -> video ->
+    R2 -> manifest) except the social post — useful for smoke tests before an
+    Upload-Post account exists, since it needs no `social-api-secret`.
+    """
     context = _advance_series_state(language)
     episode_number = context["episode_number"]
     print(f"🚀 Starting Drama Pipeline | Lang: {language} | Episode {episode_number}/{SERIES_LENGTH}")
@@ -435,10 +440,14 @@ def run_full_pipeline(topic_seed: str, language: str) -> dict:
 
     update_episode_manifest.remote(cloud_url, series_title, script_data["title"], episode_number, language)
 
-    # 5. Publish
-    print("📱 Triggering Social Media APIs...")
-    publish_status = publish_to_socials.remote(cloud_url, series_title, script_data["title"], episode_number, language)
-    print(f"🎉 Pipeline Complete! Social API Response: {publish_status}")
+    # 5. Publish (skipped for smoke tests / when no social account is configured yet)
+    if publish:
+        print("📱 Triggering Social Media APIs...")
+        publish_status = publish_to_socials.remote(cloud_url, series_title, script_data["title"], episode_number, language)
+        print(f"🎉 Pipeline Complete! Social API Response: {publish_status}")
+    else:
+        publish_status = "skipped"
+        print(f"🎬 Pipeline Complete (publishing skipped). Video: {cloud_url}")
 
     return {
         "series_title": series_title,
@@ -450,14 +459,17 @@ def run_full_pipeline(topic_seed: str, language: str) -> dict:
 
 
 @app.local_entrypoint()
-def run_pipeline(topic_seed: str = "A hidden heir crashes a billionaire's wedding", language: str = "en"):
+def run_pipeline(topic_seed: str = "A hidden heir crashes a billionaire's wedding", language: str = "en", publish: bool = True):
     """
     Triggers today's episode locally — continuing the current series, or starting a
     brand-new one (with `topic_seed` as loose inspiration) if the last series just
     finished its finale. Run via:
     modal run modal_drama_generator.py --topic-seed "Your Plot" --language "ar"
+
+    For a smoke test with no Upload-Post account, skip the social post:
+    modal run modal_drama_generator.py --no-publish
     """
-    run_full_pipeline(topic_seed, language)
+    run_full_pipeline(topic_seed, language, publish)
 
 
 @app.function(timeout=1200)
@@ -475,5 +487,6 @@ def trigger_pipeline(data: dict):
     """
     topic_seed = data.get("prompt", "A hidden heir crashes a billionaire's wedding")
     language = data.get("language", "en")
-    result = run_full_pipeline(topic_seed, language)
+    publish = data.get("publish", True)  # POST {"publish": false} to render without posting
+    result = run_full_pipeline(topic_seed, language, publish)
     return {"status": "success", **result}
