@@ -174,18 +174,35 @@ def generate_scene_image(visual_prompt: str, index: int) -> bytes:
     this pipeline's volume, since a hosted API avoids per-container cold starts.
     """
     import time
+    import random
     import requests
     from replicate.client import Client
+    from replicate.exceptions import ReplicateError
 
     client = Client(api_token=os.environ["REPLICATE_API_TOKEN"])
 
     # Create the prediction, then poll with quick GETs instead of holding one
     # long HTTP request open (which is what was hitting httpx ReadTimeout).
+    # Retry on HTTP 429: fanning out 12 scenes at once exceeds Replicate's
+    # reduced burst limit when the account balance is under $10, so back off
+    # and retry until the throttle window clears.
     model = client.models.get("black-forest-labs/flux-schnell")
-    prediction = client.predictions.create(
-        version=model.latest_version.id,
-        input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
-    )
+
+    prediction = None
+    for attempt in range(8):
+        try:
+            prediction = client.predictions.create(
+                version=model.latest_version.id,
+                input={"prompt": visual_prompt, "aspect_ratio": "9:16", "output_format": "png"},
+            )
+            break
+        except ReplicateError as e:
+            if getattr(e, "status", None) == 429 and attempt < 7:
+                backoff = min(30, 5 * (attempt + 1)) + random.uniform(0, 2)
+                print(f"Scene {index} throttled (429); retrying in {backoff:.1f}s")
+                time.sleep(backoff)
+                continue
+            raise
 
     deadline = time.time() + 240
     while prediction.status not in ("succeeded", "failed", "canceled"):
