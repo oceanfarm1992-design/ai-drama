@@ -50,16 +50,16 @@ app_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "wget", "imagemagick")
     .pip_install(
-        "torch",
+        "torch==2.5.1",
         "moviepy==1.0.3",
         "openai",
         "elevenlabs",
         "replicate",
         "boto3",
         "requests",
-        "diffusers",
-        "transformers",
-        "accelerate",
+        "diffusers==0.30.0",
+        "transformers==4.41.2",
+        "accelerate==0.34.2",
         "imageio",
         "imageio-ffmpeg",
         "pillow"
