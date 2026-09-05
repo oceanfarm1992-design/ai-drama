@@ -508,28 +508,39 @@ def _ken_burns_clip(image_bytes: bytes, duration: float, index: int):
 
 
 @app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=900)
-def assemble_and_upload(image_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
-    """Builds the episode from still images + per-scene voiceovers using Ken Burns
-    motion, enforces the 63-second rule, burns the watermark, and uploads to R2 —
-    all in one CPU container (no GPU).
+def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
+    """Builds the episode from per-scene LTX motion clips + voiceovers, enforces the
+    63-second rule, burns the watermark, and uploads to R2 — all in one CPU container.
 
-    Each scene's image is shown for exactly the length of its voiceover, so audio
-    and visuals stay in sync. Takes raw png/mp3 bytes (not paths).
+    Each LTX clip is silent and ~4s; we set every scene's on-screen length to match
+    its voiceover, trimming the clip if the line is shorter or freezing its last
+    frame if the line is longer, so audio and visuals stay in sync. Raw mp4/mp3 bytes.
     """
     import boto3
     from moviepy.editor import (
-        AudioFileClip, ImageClip, concatenate_videoclips, CompositeVideoClip
+        AudioFileClip, VideoFileClip, ImageClip, concatenate_videoclips, CompositeVideoClip
     )
 
-    # Build one Ken Burns clip per scene, each carrying its own voiceover.
     scene_clips = []
-    for i, (img_blob, audio_blob) in enumerate(zip(image_blobs, audio_blobs)):
-        audio_path = f"/tmp/scene_{i}_audio.mp3"
-        with open(audio_path, "wb") as f:
+    for i, (video_blob, audio_blob) in enumerate(zip(video_blobs, audio_blobs)):
+        vpath, apath = f"/tmp/v{i}.mp4", f"/tmp/a{i}.mp3"
+        with open(vpath, "wb") as f:
+            f.write(video_blob)
+        with open(apath, "wb") as f:
             f.write(audio_blob)
-        audio = AudioFileClip(audio_path)
-        clip = _ken_burns_clip(img_blob, audio.duration, i).set_audio(audio)
-        scene_clips.append(clip)
+
+        audio = AudioFileClip(apath)
+        video = VideoFileClip(vpath).without_audio()
+        dur = audio.duration
+
+        if video.duration >= dur:
+            video = video.subclip(0, dur)
+        else:
+            # Line longer than the clip — hold the last frame to fill the gap.
+            freeze = ImageClip(video.get_frame(video.duration - 0.05)).set_duration(dur - video.duration)
+            video = concatenate_videoclips([video, freeze], method="compose")
+
+        scene_clips.append(video.set_audio(audio))
 
     final_video = concatenate_videoclips(scene_clips, method="compose")
 
@@ -696,20 +707,27 @@ def run_full_pipeline(topic_seed: str, language: str, publish: bool = True) -> d
     visual_prompts = [scene["visual_prompt"] for scene in script_data["scenes"]]
     voiceovers = [scene["voiceover"] for scene in script_data["scenes"]]
     indices = list(range(len(visual_prompts)))
+    episode_id = str(uuid.uuid4())[:8]
 
     print("🖼️ Generating scene stills via Replicate (FLUX.1-schnell)...")
     scene_images = list(generate_scene_image.map(visual_prompts, indices))
+
+    # LTX i2v needs the still as a URL, so stage each image in R2 first.
+    img_keys = [f"tmp/{episode_id}_s{i}.png" for i in indices]
+    image_urls = list(upload_bytes_to_r2.map(scene_images, img_keys, ["image/png"] * len(indices)))
+
+    print("🎞️ Animating scenes via LTX-Video (Replicate)...")
+    video_blobs = list(generate_video_ltx.map(image_urls, visual_prompts, indices))
 
     # Render audio in parallel via ElevenLabs
     print("⏳ Rendering voiceovers via ElevenLabs...")
     audio_blobs = list(generate_voiceover.map(voiceovers, [language] * len(voiceovers), indices))
 
-    # 3. Assemble with Ken Burns motion, watermark & upload (single CPU container)
-    print("🎬 Assembling 63-second final cut (Ken Burns) and uploading to R2...")
-    episode_id = str(uuid.uuid4())[:8]
+    # 3. Assemble LTX clips synced to voiceovers, watermark & upload (single CPU container)
+    print("🎬 Assembling 63-second final cut (LTX motion) and uploading to R2...")
     output_filename = f"episode_{language}_{episode_id}.mp4"
     object_name = f"renders/{output_filename}"
-    cloud_url = assemble_and_upload.remote(scene_images, audio_blobs, output_filename, object_name)
+    cloud_url = assemble_and_upload.remote(video_blobs, audio_blobs, output_filename, object_name)
     print(f"✅ Video secured in cloud: {cloud_url}")
 
     update_episode_manifest.remote(cloud_url, series_title, script_data["title"], episode_number, language)
