@@ -1,11 +1,12 @@
 """
 SKILL FILE: Serverless AI Drama Generator Pipeline
-Platform: Modal (Serverless GPU) + hosted APIs, chosen per stage for cost/quality:
+Platform: Modal (serverless CPU) + hosted APIs, chosen per stage for cost/quality:
   - Script:  OpenAI gpt-4o-mini (API)       - cheap, reliable structured JSON at this volume
   - Voice:   ElevenLabs eleven_multilingual_v2 (API) - realistic, covers 31 languages incl. Tamil
   - Photos:  Replicate black-forest-labs/flux-schnell (API) - cheap, realistic stills
-  - Video:   Stable Video Diffusion img2vid-xt (self-hosted Modal A100) - the one stage
-             where self-hosting is meaningfully cheaper than any comparable video API
+  - Motion:  Ken Burns pan/zoom over the stills (moviepy, CPU) - no GPU, ~cents/episode.
+             (An earlier build self-hosted Stable Video Diffusion on an A100, but it
+             cost ~$7/episode and looked choppy; Ken Burns is far cheaper and cleaner.)
 Target: 63-second Vertical Video for TikTok Creator Rewards / YouTube Shorts
 
 Serialized format: each language runs its own persistent SERIES_LENGTH-episode arc
@@ -35,34 +36,27 @@ import modal
 # 1. INFRASTRUCTURE & ENVIRONMENT SETUP
 # ==========================================
 
-# Create a persistent volume to cache heavy model weights so they don't redownload every run.
-model_volume = modal.Volume.from_name("drama-models-cache", create_if_missing=True)
-
 # Persists each language's ongoing series: episode number, cast bios, and running
 # plot recap, so consecutive daily runs continue the same story instead of each
 # being a standalone one-off.
 series_state = modal.Dict.from_name("drama-series-state", create_if_missing=True)
 
 SERIES_LENGTH = 30  # episodes per series before a new cast/premise takes over
+FRAME_SIZE = (720, 1280)  # vertical 9:16 output
 
-# Define the container image with all necessary system packages and Python libraries.
+# Lightweight CPU-only image: visuals come from Replicate (API) and motion is a
+# Ken Burns pan/zoom done in moviepy, so there's no GPU/torch/diffusers stack.
 app_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "wget", "imagemagick")
+    .apt_install("ffmpeg")
     .pip_install(
-        "torch==2.5.1",
         "moviepy==1.0.3",
+        "numpy<2",
         "openai",
         "elevenlabs",
         "replicate",
         "boto3",
         "requests",
-        "diffusers==0.30.0",
-        "transformers==4.41.2",
-        "accelerate==0.34.2",
-        "imageio",
-        "imageio-ffmpeg",
-        "opencv-python-headless",
         "pillow",
         "fastapi[standard]"
     )
@@ -228,45 +222,6 @@ def generate_scene_image(visual_prompt: str, index: int) -> bytes:
     image_url = prediction.output[0]
     return requests.get(image_url, timeout=120).content
 
-
-@app.function(gpu="A100", volumes={"/models": model_volume}, timeout=600)
-def animate_scene_image(image_bytes: bytes, index: int) -> bytes:
-    """Animates a still image into a ~4-second vertical video clip via Stable Video Diffusion.
-
-    This is the one stage kept self-hosted: video-generation APIs (Kling, Runway)
-    run 5-25x more expensive per episode than running SVD on Modal's A100s.
-
-    Returns the clip's raw mp4 bytes (not a path): each Modal function runs in
-    its own container with its own /tmp, so files must travel as bytes, not paths.
-    """
-    import io
-    import torch
-    from PIL import Image
-    from diffusers import StableVideoDiffusionPipeline
-    from diffusers.utils import export_to_video
-
-    output_path = f"/tmp/scene_{index}_video.mp4"
-
-    pipe = StableVideoDiffusionPipeline.from_pretrained(
-        "stabilityai/stable-video-diffusion-img2vid-xt",
-        torch_dtype=torch.float16,
-        variant="fp16",
-        cache_dir="/models",
-    )
-    pipe.to("cuda")
-    pipe.enable_model_cpu_offload()
-
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((576, 1024))
-
-    # SVD-XT generates a fixed 25 frames; exporting at 5fps yields ~5s/scene
-    # to match the target ~5.25s-per-scene pacing from a 63s, 12-scene episode.
-    frames = pipe(image, height=1024, width=576, decode_chunk_size=8, motion_bucket_id=127).frames[0]
-    export_to_video(frames, output_path, fps=5)
-    model_volume.commit()
-
-    with open(output_path, "rb") as f:
-        return f.read()
-
 # ==========================================
 # 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
@@ -308,52 +263,76 @@ def _make_watermark(text: str, duration: float):
     )
 
 
-@app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=600)
-def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
-    """Merges audio/video, enforces the 63-second rule, burns the watermark, and
-    uploads the result to R2 — all in one container so the finished video never
-    has to hop between isolated filesystems.
+def _ken_burns_clip(image_bytes: bytes, duration: float, index: int):
+    """Turns a still image into a slow pan/zoom clip filling FRAME_SIZE.
 
-    Takes raw mp4/mp3 bytes (not paths) since each upstream clip was produced in
-    a separate container.
+    Alternates zoom-in / zoom-out per scene for variety. Pure CPU (moviepy +
+    Pillow), so it needs no GPU — this is what replaces Stable Video Diffusion.
+    """
+    import io
+    from PIL import Image
+    from moviepy.editor import ImageClip
+
+    fw, fh = FRAME_SIZE
+
+    # Cover the frame (center-crop to 9:16) so there are no black bars.
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    scale = max(fw / img.width, fh / img.height)
+    img = img.resize((round(img.width * scale), round(img.height * scale)))
+    left, top = (img.width - fw) // 2, (img.height - fh) // 2
+    img = img.crop((left, top, left + fw, top + fh))
+
+    import numpy as np
+    base = ImageClip(np.array(img)).set_duration(duration)
+
+    # Slow zoom: in on even scenes, out on odd. resize() grows the clip while a
+    # fixed-size composite crops it, producing the Ken Burns motion.
+    zoom = 0.10
+    if index % 2 == 0:
+        resizer = lambda t: 1 + zoom * (t / duration)          # 1.00 -> 1.10
+    else:
+        resizer = lambda t: 1 + zoom * (1 - t / duration)      # 1.10 -> 1.00
+
+    from moviepy.editor import CompositeVideoClip
+    moving = base.resize(resizer).set_position(("center", "center"))
+    return CompositeVideoClip([moving], size=FRAME_SIZE).set_duration(duration)
+
+
+@app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=900)
+def assemble_and_upload(image_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
+    """Builds the episode from still images + per-scene voiceovers using Ken Burns
+    motion, enforces the 63-second rule, burns the watermark, and uploads to R2 —
+    all in one CPU container (no GPU).
+
+    Each scene's image is shown for exactly the length of its voiceover, so audio
+    and visuals stay in sync. Takes raw png/mp3 bytes (not paths).
     """
     import boto3
     from moviepy.editor import (
-        VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips,
-        concatenate_audioclips, CompositeVideoClip
+        AudioFileClip, ImageClip, concatenate_videoclips, CompositeVideoClip
     )
 
-    # Materialize the incoming bytes into this container's own /tmp.
-    video_paths, audio_paths = [], []
-    for i, blob in enumerate(video_blobs):
-        p = f"/tmp/scene_{i}_video.mp4"
-        with open(p, "wb") as f:
-            f.write(blob)
-        video_paths.append(p)
-    for i, blob in enumerate(audio_blobs):
-        p = f"/tmp/scene_{i}_audio.mp3"
-        with open(p, "wb") as f:
-            f.write(blob)
-        audio_paths.append(p)
+    # Build one Ken Burns clip per scene, each carrying its own voiceover.
+    scene_clips = []
+    for i, (img_blob, audio_blob) in enumerate(zip(image_blobs, audio_blobs)):
+        audio_path = f"/tmp/scene_{i}_audio.mp3"
+        with open(audio_path, "wb") as f:
+            f.write(audio_blob)
+        audio = AudioFileClip(audio_path)
+        clip = _ken_burns_clip(img_blob, audio.duration, i).set_audio(audio)
+        scene_clips.append(clip)
 
-    # Load and concatenate
-    v_clips = [VideoFileClip(p) for p in video_paths]
-    a_clips = [AudioFileClip(p) for p in audio_paths]
+    final_video = concatenate_videoclips(scene_clips, method="compose")
 
-    final_video = concatenate_videoclips(v_clips, method="compose")
-    final_audio = concatenate_audioclips(a_clips)
+    # MONETIZATION ENFORCEMENT: Must be >= 63 seconds. If the voiceovers total
+    # less, hold the last frame (silent) to reach 63s.
+    if final_video.duration < 63.0:
+        print(f"Padding video: {final_video.duration}s -> 63.0s")
+        freeze = ImageClip(final_video.get_frame(final_video.duration - 0.04))
+        freeze = freeze.set_duration(63.0 - final_video.duration)
+        final_video = concatenate_videoclips([final_video, freeze], method="compose")
 
-    # MONETIZATION ENFORCEMENT: Must be >= 63 seconds
-    final_duration = max(63.0, final_audio.duration)
-    if final_video.duration < final_duration:
-        # SVD's fixed 25-frame clips rarely land on an exact total, so freeze
-        # the last frame to fill any gap instead of leaving trailing silence/black.
-        print(f"Padding video: {final_video.duration}s -> {final_duration}s")
-        freeze_frame = ImageClip(final_video.get_frame(final_video.duration - 0.04))
-        freeze_frame = freeze_frame.set_duration(final_duration - final_video.duration)
-        final_video = concatenate_videoclips([final_video, freeze_frame], method="compose")
-
-    final_video = final_video.set_audio(final_audio).set_duration(final_duration)
+    final_duration = final_video.duration
 
     # Render the watermark with Pillow (not MoviePy's TextClip, which shells out
     # to ImageMagick — blocked by Debian's default security policy.xml).
@@ -503,29 +482,25 @@ def run_full_pipeline(topic_seed: str, language: str, publish: bool = True) -> d
 
     _save_series_state(language, episode_number, script_data)
 
-    # 2. Parallel Generation (images, video animation, and audio all fan out concurrently)
+    # 2. Parallel Generation (images and audio fan out concurrently).
+    # Each step returns raw bytes (not paths), since Modal functions have isolated filesystems.
     visual_prompts = [scene["visual_prompt"] for scene in script_data["scenes"]]
     voiceovers = [scene["voiceover"] for scene in script_data["scenes"]]
     indices = list(range(len(visual_prompts)))
 
-    # Generate stills via Replicate, then animate each into a clip on Modal's A100s.
-    # Each step returns raw bytes (not paths), since Modal functions have isolated filesystems.
     print("🖼️ Generating scene stills via Replicate (FLUX.1-schnell)...")
     scene_images = list(generate_scene_image.map(visual_prompts, indices))
-
-    print("⏳ Animating scenes into video on A100 GPUs (Stable Video Diffusion)...")
-    video_blobs = list(animate_scene_image.map(scene_images, indices))
 
     # Render audio in parallel via ElevenLabs
     print("⏳ Rendering voiceovers via ElevenLabs...")
     audio_blobs = list(generate_voiceover.map(voiceovers, [language] * len(voiceovers), indices))
 
-    # 3. Assemble, watermark & upload (single container so the video never hops)
-    print("🎬 Assembling 63-second final cut and uploading to R2...")
+    # 3. Assemble with Ken Burns motion, watermark & upload (single CPU container)
+    print("🎬 Assembling 63-second final cut (Ken Burns) and uploading to R2...")
     episode_id = str(uuid.uuid4())[:8]
     output_filename = f"episode_{language}_{episode_id}.mp4"
     object_name = f"renders/{output_filename}"
-    cloud_url = assemble_and_upload.remote(video_blobs, audio_blobs, output_filename, object_name)
+    cloud_url = assemble_and_upload.remote(scene_images, audio_blobs, output_filename, object_name)
     print(f"✅ Video secured in cloud: {cloud_url}")
 
     update_episode_manifest.remote(cloud_url, series_title, script_data["title"], episode_number, language)
