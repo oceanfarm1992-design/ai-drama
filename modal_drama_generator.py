@@ -142,25 +142,37 @@ def generate_voiceover(text: str, language: str, index: int) -> str:
     eleven_multilingual_v2 covers all 31 of its supported languages (including
     Tamil) through one API/voice, so no per-language branching is needed here.
     """
+    import time
+    import random
     from elevenlabs.client import ElevenLabs
+    from elevenlabs.core.api_error import ApiError
 
     output_path = f"/tmp/scene_{index}_audio.mp3"
 
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
     voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # "Rachel", a default premade voice
 
-    audio = client.text_to_speech.convert(
-        voice_id=voice_id,
-        model_id="eleven_multilingual_v2",
-        text=text,
-        language_code=language,
-    )
-
-    with open(output_path, "wb") as f:
-        for chunk in audio:
-            f.write(chunk)
-
-    return output_path
+    # Retry on HTTP 429: the free/low tiers cap concurrent requests, and we fan
+    # out all 12 scene voiceovers at once, so back off and retry when throttled.
+    for attempt in range(8):
+        try:
+            audio = client.text_to_speech.convert(
+                voice_id=voice_id,
+                model_id="eleven_multilingual_v2",
+                text=text,
+                language_code=language,
+            )
+            with open(output_path, "wb") as f:
+                for chunk in audio:
+                    f.write(chunk)
+            return output_path
+        except ApiError as e:
+            if getattr(e, "status_code", None) == 429 and attempt < 7:
+                backoff = min(30, 5 * (attempt + 1)) + random.uniform(0, 2)
+                print(f"Scene {index} voiceover throttled (429); retrying in {backoff:.1f}s")
+                time.sleep(backoff)
+                continue
+            raise
 
 # ==========================================
 # 4. VISUALS: STILL IMAGE (API) -> ANIMATED VIDEO (self-hosted)
