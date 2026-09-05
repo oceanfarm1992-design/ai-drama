@@ -57,7 +57,7 @@ app_image = (
         "replicate",
         "boto3",
         "requests",
-        "pillow",
+        "pillow<10",  # moviepy 1.0.3's resize() uses Image.ANTIALIAS, removed in Pillow 10+
         "fastapi[standard]"
     )
 )
