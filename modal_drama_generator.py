@@ -136,18 +136,19 @@ def generate_script(language: str, topic_seed: str, episode_number: int, charact
 # ==========================================
 
 @app.function(secrets=[modal.Secret.from_name("elevenlabs-secret")], timeout=120)
-def generate_voiceover(text: str, language: str, index: int) -> str:
+def generate_voiceover(text: str, language: str, index: int) -> bytes:
     """Generates localized voiceover audio for a specific scene via ElevenLabs.
 
     eleven_multilingual_v2 covers all 31 of its supported languages (including
     Tamil) through one API/voice, so no per-language branching is needed here.
+
+    Returns the raw mp3 bytes (not a path) so the clip can travel to the
+    assembly container, which has a separate filesystem.
     """
     import time
     import random
     from elevenlabs.client import ElevenLabs
     from elevenlabs.core.api_error import ApiError
-
-    output_path = f"/tmp/scene_{index}_audio.mp3"
 
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
     voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # "Rachel", a default premade voice
@@ -162,10 +163,7 @@ def generate_voiceover(text: str, language: str, index: int) -> str:
                 text=text,
                 language_code=language,
             )
-            with open(output_path, "wb") as f:
-                for chunk in audio:
-                    f.write(chunk)
-            return output_path
+            return b"".join(audio)
         except ApiError as e:
             if getattr(e, "status_code", None) == 429 and attempt < 7:
                 backoff = min(30, 5 * (attempt + 1)) + random.uniform(0, 2)
@@ -232,11 +230,14 @@ def generate_scene_image(visual_prompt: str, index: int) -> bytes:
 
 
 @app.function(gpu="A100", volumes={"/models": model_volume}, timeout=600)
-def animate_scene_image(image_bytes: bytes, index: int) -> str:
+def animate_scene_image(image_bytes: bytes, index: int) -> bytes:
     """Animates a still image into a ~4-second vertical video clip via Stable Video Diffusion.
 
     This is the one stage kept self-hosted: video-generation APIs (Kling, Runway)
     run 5-25x more expensive per episode than running SVD on Modal's A100s.
+
+    Returns the clip's raw mp4 bytes (not a path): each Modal function runs in
+    its own container with its own /tmp, so files must travel as bytes, not paths.
     """
     import io
     import torch
@@ -263,19 +264,40 @@ def animate_scene_image(image_bytes: bytes, index: int) -> str:
     export_to_video(frames, output_path, fps=5)
     model_volume.commit()
 
-    return output_path
+    with open(output_path, "rb") as f:
+        return f.read()
 
 # ==========================================
-# 5. ASSEMBLY & WATERMARKING
+# 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
 
-@app.function(timeout=600)
-def assemble_final_video(video_paths: list, audio_paths: list, output_filename: str) -> str:
-    """Merges audio/video, enforces the 63-second rule, and burns the watermark."""
+@app.function(secrets=[modal.Secret.from_name("r2-credentials")], timeout=600)
+def assemble_and_upload(video_blobs: list, audio_blobs: list, output_filename: str, object_name: str) -> str:
+    """Merges audio/video, enforces the 63-second rule, burns the watermark, and
+    uploads the result to R2 — all in one container so the finished video never
+    has to hop between isolated filesystems.
+
+    Takes raw mp4/mp3 bytes (not paths) since each upstream clip was produced in
+    a separate container.
+    """
+    import boto3
     from moviepy.editor import (
         VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips,
         concatenate_audioclips, CompositeVideoClip, TextClip
     )
+
+    # Materialize the incoming bytes into this container's own /tmp.
+    video_paths, audio_paths = [], []
+    for i, blob in enumerate(video_blobs):
+        p = f"/tmp/scene_{i}_video.mp4"
+        with open(p, "wb") as f:
+            f.write(blob)
+        video_paths.append(p)
+    for i, blob in enumerate(audio_blobs):
+        p = f"/tmp/scene_{i}_audio.mp3"
+        with open(p, "wb") as f:
+            f.write(blob)
+        audio_paths.append(p)
 
     # Load and concatenate
     v_clips = [VideoFileClip(p) for p in video_paths]
@@ -311,26 +333,14 @@ def assemble_final_video(video_paths: list, audio_paths: list, output_filename: 
     final_path = f"/tmp/{output_filename}"
     final_video.write_videofile(final_path, codec="libx264", audio_codec="aac", fps=24, preset="fast", logger=None)
 
-    return final_path
-
-# ==========================================
-# 6. CLOUD STORAGE UPLOAD
-# ==========================================
-
-@app.function(secrets=[modal.Secret.from_name("r2-credentials")])
-def upload_to_r2(local_file_path: str, object_name: str) -> str:
-    """Streams the final MP4 to Cloudflare R2 / AWS S3."""
-    import boto3
-    
+    # Upload straight to R2 from this same container.
     s3 = boto3.client(
         "s3",
         endpoint_url=os.environ["R2_ENDPOINT_URL"],
         aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"]
     )
-
-    bucket_name = os.environ["R2_BUCKET_NAME"]
-    s3.upload_file(local_file_path, bucket_name, object_name)
+    s3.upload_file(final_path, os.environ["R2_BUCKET_NAME"], object_name)
 
     public_base_url = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
     return f"{public_base_url}/{object_name}"
@@ -467,26 +477,24 @@ def run_full_pipeline(topic_seed: str, language: str, publish: bool = True) -> d
     voiceovers = [scene["voiceover"] for scene in script_data["scenes"]]
     indices = list(range(len(visual_prompts)))
 
-    # Generate stills via Replicate, then animate each into a clip on Modal's A100s
+    # Generate stills via Replicate, then animate each into a clip on Modal's A100s.
+    # Each step returns raw bytes (not paths), since Modal functions have isolated filesystems.
     print("🖼️ Generating scene stills via Replicate (FLUX.1-schnell)...")
     scene_images = list(generate_scene_image.map(visual_prompts, indices))
 
     print("⏳ Animating scenes into video on A100 GPUs (Stable Video Diffusion)...")
-    video_paths = list(animate_scene_image.map(scene_images, indices))
+    video_blobs = list(animate_scene_image.map(scene_images, indices))
 
     # Render audio in parallel via ElevenLabs
     print("⏳ Rendering voiceovers via ElevenLabs...")
-    audio_paths = list(generate_voiceover.map(voiceovers, [language] * len(voiceovers), indices))
+    audio_blobs = list(generate_voiceover.map(voiceovers, [language] * len(voiceovers), indices))
 
-    # 3. Assemble & Watermark
-    print("🎬 Assembling 63-second final cut...")
+    # 3. Assemble, watermark & upload (single container so the video never hops)
+    print("🎬 Assembling 63-second final cut and uploading to R2...")
     episode_id = str(uuid.uuid4())[:8]
     output_filename = f"episode_{language}_{episode_id}.mp4"
-    final_video_path = assemble_final_video.remote(video_paths, audio_paths, output_filename)
-
-    # 4. Upload to Cloud
-    print("☁️ Uploading to Cloudflare R2...")
-    cloud_url = upload_to_r2.remote(final_video_path, f"renders/{output_filename}")
+    object_name = f"renders/{output_filename}"
+    cloud_url = assemble_and_upload.remote(video_blobs, audio_blobs, output_filename, object_name)
     print(f"✅ Video secured in cloud: {cloud_url}")
 
     update_episode_manifest.remote(cloud_url, series_title, script_data["title"], episode_number, language)
