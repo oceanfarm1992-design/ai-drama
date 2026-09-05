@@ -323,6 +323,61 @@ def test_lipsync(
     print(f"✅ LIPSYNC TEST VIDEO: {url}")
 
 
+# Wan 2.2 A14B image-to-video on Replicate: open-source, real generated motion.
+WAN_I2V_VERSION = "2c62e0842338726c74ad99a3c469255ce3f4c1f66ee000c265451b87754ac0c9"
+
+
+@app.function(secrets=[modal.Secret.from_name("replicate-secret")], timeout=900)
+def generate_video_wan(image_url: str, motion_prompt: str, index: int) -> bytes:
+    """Animates a still (by URL) into a ~5s clip via the open-source Wan 2.2 i2v model."""
+    import time
+    import requests
+    from replicate.client import Client
+
+    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"])
+    prediction = client.predictions.create(
+        version=WAN_I2V_VERSION,
+        input={
+            "image": image_url,
+            "prompt": motion_prompt,
+            "resolution": "480p",   # cheaper tier for the test; 720p available
+            "num_frames": 81,       # ~5s at 16fps
+            "frames_per_second": 16,
+            "go_fast": True,
+        },
+    )
+
+    deadline = time.time() + 780
+    while prediction.status not in ("succeeded", "failed", "canceled"):
+        if time.time() > deadline:
+            raise RuntimeError(f"Wan i2v scene {index} timed out (status={prediction.status})")
+        time.sleep(3)
+        prediction.reload()
+
+    if prediction.status != "succeeded":
+        raise RuntimeError(f"Wan i2v scene {index} {prediction.status}: {prediction.error}")
+
+    out = prediction.output
+    if isinstance(out, list):
+        out = out[0]
+    return requests.get(out, timeout=180).content
+
+
+@app.local_entrypoint()
+def test_wan(
+    prompt: str = "cinematic vertical portrait of a young woman with long dark hair in a dimly lit room, dramatic moody lighting, film still, 9:16",
+    motion: str = "slow cinematic push-in, she slowly turns her head, hair and fabric move gently, subtle atmosphere",
+):
+    """One-scene proof of open-source generated motion: FLUX still -> Wan 2.2 i2v.
+    Run: modal run modal_drama_generator.py::test_wan
+    """
+    img = generate_scene_image.remote(prompt, 0)
+    img_url = upload_bytes_to_r2.remote(img, "tests/wan_input.png", "image/png")
+    vid = generate_video_wan.remote(img_url, motion, 0)
+    url = upload_bytes_to_r2.remote(vid, "tests/wan_test.mp4")
+    print(f"✅ WAN TEST VIDEO: {url}")
+
+
 # ==========================================
 # 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
