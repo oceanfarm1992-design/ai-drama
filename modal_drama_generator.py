@@ -62,6 +62,7 @@ app_image = (
         "accelerate==0.34.2",
         "imageio",
         "imageio-ffmpeg",
+        "opencv-python-headless",
         "pillow",
         "fastapi[standard]"
     )
