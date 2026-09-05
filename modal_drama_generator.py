@@ -378,6 +378,59 @@ def test_wan(
     print(f"✅ WAN TEST VIDEO: {url}")
 
 
+# LTX-Video on Replicate: DiT-based, much faster/cheaper than Wan.
+LTX_VERSION = "8c47da666861d081eeb4d1261853087de23923a268a69b63febdf5dc1dee08e4"
+
+
+@app.function(secrets=[modal.Secret.from_name("replicate-secret")], timeout=900)
+def generate_video_ltx(image_url: str, motion_prompt: str, index: int) -> bytes:
+    """Animates a still (by URL) into a short clip via the open-source LTX-Video model."""
+    import time
+    import requests
+    from replicate.client import Client
+
+    client = Client(api_token=os.environ["REPLICATE_API_TOKEN"])
+    prediction = client.predictions.create(
+        version=LTX_VERSION,
+        input={
+            "image": image_url,
+            "prompt": motion_prompt,
+            "aspect_ratio": "9:16",
+            "length": 97,   # ~4s
+        },
+    )
+
+    deadline = time.time() + 780
+    while prediction.status not in ("succeeded", "failed", "canceled"):
+        if time.time() > deadline:
+            raise RuntimeError(f"LTX scene {index} timed out (status={prediction.status})")
+        time.sleep(3)
+        prediction.reload()
+
+    if prediction.status != "succeeded":
+        raise RuntimeError(f"LTX scene {index} {prediction.status}: {prediction.error}")
+
+    out = prediction.output
+    if isinstance(out, list):
+        out = out[0]
+    return requests.get(out, timeout=180).content
+
+
+@app.local_entrypoint()
+def test_ltx(
+    prompt: str = "cinematic vertical portrait of a young woman with long dark hair in a dimly lit room, dramatic moody lighting, film still, 9:16",
+    motion: str = "slow cinematic push-in, she slowly turns her head, hair and fabric move gently, subtle atmosphere",
+):
+    """One-scene proof of the cheap open-source motion option: FLUX still -> LTX-Video.
+    Run: modal run modal_drama_generator.py::test_ltx
+    """
+    img = generate_scene_image.remote(prompt, 0)
+    img_url = upload_bytes_to_r2.remote(img, "tests/ltx_input.png", "image/png")
+    vid = generate_video_ltx.remote(img_url, motion, 0)
+    url = upload_bytes_to_r2.remote(vid, "tests/ltx_test.mp4")
+    print(f"✅ LTX TEST VIDEO: {url}")
+
+
 # ==========================================
 # 5. ASSEMBLY, WATERMARKING & UPLOAD
 # ==========================================
