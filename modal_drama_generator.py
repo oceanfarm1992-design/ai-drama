@@ -62,7 +62,8 @@ app_image = (
         "accelerate==0.34.2",
         "imageio",
         "imageio-ffmpeg",
-        "pillow"
+        "pillow",
+        "fastapi[standard]"
     )
 )
 
@@ -473,7 +474,7 @@ def run_pipeline(topic_seed: str = "A hidden heir crashes a billionaire's weddin
 
 
 @app.function(timeout=1200)
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def trigger_pipeline(data: dict):
     """
     HTTP-triggered entrypoint for remote/cron-based runs (replaces the old
