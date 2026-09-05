@@ -1,0 +1,23 @@
+name: Daily Cloud Video Render Trigger
+
+on:
+  schedule:
+    # Runs every day at 08:00 UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  trigger-modal-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      # MODAL_WEBHOOK_URL must point at the `trigger_pipeline` endpoint from
+      # modal_drama_generator.py (get the URL via `modal deploy modal_drama_generator.py`).
+      - name: Send Execution Request to Modal
+        run: |
+          curl -X POST "${{ secrets.MODAL_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "prompt": "A secret heir reveals the truth during a family gala",
+              "language": "en",
+              "episode_id": "'$(date +%s)'"
+            }'
