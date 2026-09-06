@@ -13,3 +13,4 @@ Private Branding/
 re.zip
 *.mp4
 seabini_build/
+seabini_assets/music/*.wav
