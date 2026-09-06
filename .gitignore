@@ -10,3 +10,6 @@ venv/
 .APIs.txt
 *.APIs.txt
 Private Branding/
+re.zip
+*.mp4
+seabini_build/
