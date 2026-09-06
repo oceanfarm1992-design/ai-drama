@@ -107,9 +107,16 @@ def _prep_bg(path):
     bg = bg.resize((int(bg.width*s), int(bg.height*s)))
     return bg, (bg.width-W)//2, (bg.height-H)//2
 
+_FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   # Linux / Modal
+    "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/Arial.ttf",  # Windows
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",     # macOS
+]
 def _font(sz):
-    try: return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", sz)
-    except OSError: return ImageFont.load_default()
+    for p in _FONT_PATHS:
+        try: return ImageFont.truetype(p, sz)
+        except OSError: continue
+    return ImageFont.load_default()
 
 def render_scene(speaker, location, line, tag):
     ch = CHARACTERS.get(speaker.strip().lower(), CHARACTERS["bini"])
@@ -171,11 +178,12 @@ def build_episode(episode, out_path, music=None):
     if music:
         mw = str(WORK / "music.wav")
         subprocess.run([FF, "-y", "-i", music, "-ac", "2", "-ar", "44100", mw], check=True, capture_output=True)
-        m = _wav_samples(mw, len(narration)) if wave.open(mw, "rb").getnframes() >= len(narration) else None
-        if m is None:  # loop music to length
-            w = wave.open(mw, "rb"); a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, 2); w.close()
-            reps = int(np.ceil(len(narration)/len(a))); m = np.tile(a, (reps, 1))[:len(narration)]
-        narration = np.clip(narration + m.astype(np.float32)*0.16, -32768, 32767)
+        w = wave.open(mw, "rb"); a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, 2); w.close()
+        if len(a) >= len(narration):
+            m = a[:len(narration)]
+        else:  # loop music to cover the whole episode
+            reps = int(np.ceil(len(narration) / len(a))); m = np.tile(a, (reps, 1))[:len(narration)]
+        narration = np.clip(narration + m.astype(np.float32) * 0.20, -32768, 32767)
     final = narration.astype(np.int16)
     wav_path = str(WORK / "episode_audio.wav")
     ww = wave.open(wav_path, "wb"); ww.setnchannels(2); ww.setsampwidth(2); ww.setframerate(SR); ww.writeframes(final.tobytes()); ww.close()
