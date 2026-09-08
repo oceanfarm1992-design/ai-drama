@@ -41,7 +41,7 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install --quiet moviepy==1.0.3 "pillow<10" "numpy<2" imageio-ffmpeg piper-tts boto3
+          pip install --quiet moviepy==1.0.3 "pillow<10" "numpy<2" imageio-ffmpeg piper-tts
 
       - name: Render episode
         env:
@@ -51,13 +51,9 @@ jobs:
         run: |
           python seabini_episode.py "${{ github.event.inputs.theme }}" episode.mp4
 
-      - name: Publish to R2 + update showcase manifest
+      - name: Publish to GitHub Releases + update showcase manifest
         env:
-          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          SHOWCASE_TOKEN: ${{ secrets.SHOWCASE_TOKEN }}
         run: |
           TITLE=$(python -c "import json; print(json.load(open('episode_meta.json'))['title'])" 2>/dev/null || echo "SEABINI Short")
           echo "Episode title: $TITLE"

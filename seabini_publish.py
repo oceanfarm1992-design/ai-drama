@@ -1,42 +1,60 @@
-"""Uploads a finished SEABINI episode to R2 and appends it to the public
-manifest.json the showcase site reads (same schema as the old drama pipeline,
-so oceanfarm1992-design/ai-drama-showcase keeps working unmodified).
+"""Publishes a finished SEABINI episode as a GitHub Release asset on the public
+ai-drama-showcase repo, and updates the manifest.json the showcase site reads
+from its own GitHub Pages (same-origin fetch — no R2/S3 needed).
 
-Env vars required: R2_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-R2_BUCKET_NAME, R2_PUBLIC_BASE_URL.
+Env vars required: SHOWCASE_TOKEN (a GitHub PAT with contents+releases write
+access to the showcase repo — the default Actions token only covers this repo).
+Optional: SHOWCASE_REPO (default "oceanfarm1992-design/ai-drama-showcase").
 
 Run: python seabini_publish.py <video.mp4> "<episode title>" ["<language>"]
 """
-import os, sys, json, datetime, pathlib
-import boto3
-import botocore
+import os, sys, json, base64, datetime, pathlib, subprocess, urllib.request, urllib.error
 
 SERIES_TITLE = "SEABINI"
+SHOWCASE_REPO = os.environ.get("SHOWCASE_REPO", "oceanfarm1992-design/ai-drama-showcase")
+API = f"https://api.github.com/repos/{SHOWCASE_REPO}"
 
 
-def _client():
-    return boto3.client(
-        "s3",
-        endpoint_url=os.environ["R2_ENDPOINT_URL"],
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+def _token():
+    return os.environ["SHOWCASE_TOKEN"]
+
+
+def _api(method, path, body=None):
+    req = urllib.request.Request(
+        f"{API}{path}", method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {_token()}",
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"},
     )
+    try:
+        return json.loads(urllib.request.urlopen(req).read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def _upload_release(video_path: str, title: str) -> str:
+    tag = "seabini-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    env = {**os.environ, "GH_TOKEN": _token()}
+    subprocess.run(["gh", "release", "create", tag, video_path,
+                     "--repo", SHOWCASE_REPO, "--title", title,
+                     "--notes", "Auto-published by the SEABINI pipeline."],
+                    check=True, env=env)
+    filename = pathlib.Path(video_path).name
+    return f"https://github.com/{SHOWCASE_REPO}/releases/download/{tag}/{filename}"
 
 
 def publish(video_path: str, title: str, language: str = "en") -> str:
-    bucket = os.environ["R2_BUCKET_NAME"]
-    base = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
-    s3 = _client()
+    video_url = _upload_release(video_path, title)
 
-    object_name = f"renders/seabini_{pathlib.Path(video_path).stem}.mp4"
-    s3.upload_file(video_path, bucket, object_name)
-    video_url = f"{base}/{object_name}"
-
-    try:
-        existing = s3.get_object(Bucket=bucket, Key="manifest.json")
-        manifest = json.loads(existing["Body"].read())
-    except botocore.exceptions.ClientError:
-        manifest = {"episodes": []}
+    existing = _api("GET", "/contents/manifest.json")
+    if existing:
+        manifest = json.loads(base64.b64decode(existing["content"]))
+        sha = existing["sha"]
+    else:
+        manifest, sha = {"episodes": []}, None
 
     episode_number = sum(1 for e in manifest["episodes"] if e.get("series_title") == SERIES_TITLE) + 1
     manifest["episodes"].insert(0, {
@@ -48,9 +66,13 @@ def publish(video_path: str, title: str, language: str = "en") -> str:
         "video_url": video_url,
         "published_at": datetime.datetime.utcnow().isoformat() + "Z",
     })
-    s3.put_object(Bucket=bucket, Key="manifest.json",
-                   Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
-                   ContentType="application/json")
+    body = {
+        "message": f"Publish episode: {title}",
+        "content": base64.b64encode(json.dumps(manifest, ensure_ascii=False, indent=2).encode()).decode(),
+    }
+    if sha:
+        body["sha"] = sha
+    _api("PUT", "/contents/manifest.json", body)
     return video_url
 
 
