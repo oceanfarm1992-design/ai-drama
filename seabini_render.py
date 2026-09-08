@@ -83,8 +83,12 @@ def get_voiceover(text, tag):
 def _prep_audio(mp3, tag, pitch, speed):
     clean, baby = str(WORK / f"{tag}_clean.wav"), str(WORK / f"{tag}_baby.wav")
     subprocess.run([FF, "-y", "-i", mp3, "-ac", "1", "-ar", "44100", clean], check=True, capture_output=True)
+    # asetrate relabels the sample rate to fake a pitch shift, so the audio must
+    # already be true 44100Hz going in — Piper's amy-medium voice synthesizes at
+    # 22050Hz, so skipping the resample first made the relabeling roughly double
+    # the intended shift, halving duration and making speech unintelligibly fast.
     subprocess.run([FF, "-y", "-i", mp3, "-ac", "2", "-ar", "44100", "-af",
-                    f"asetrate=44100*{pitch},aresample=44100,atempo={(1/pitch)*speed:.4f}", baby], check=True, capture_output=True)
+                    f"aresample=44100,asetrate=44100*{pitch},aresample=44100,atempo={(1/pitch)*speed:.4f}", baby], check=True, capture_output=True)
     return clean, baby
 
 def _cues(clean_wav, dur):
