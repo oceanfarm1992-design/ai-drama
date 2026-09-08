@@ -40,6 +40,9 @@ LOC_BG = {"rainbow reef": "reef.png", "seagrass garden": "seagrass.png", "shell 
 def bg_for(loc):
     return str(ASSET / "backgrounds" / LOC_BG.get((loc or "").strip().lower(), "reef.png"))
 
+VOICE_ENGINE = os.environ.get("SEABINI_VOICE_ENGINE", "piper")  # "piper" (free, local) or "elevenlabs" (paid, cloud)
+_PIPER_VOICE = None  # lazy-loaded singleton; loading the model is the slow part
+
 def _eleven_key():
     k = os.environ.get("ELEVENLABS_API_KEY")
     if k: return k
@@ -47,7 +50,7 @@ def _eleven_key():
         if line.lower().startswith("elevenlabs"): return line.split("=", 1)[1].strip()
     raise SystemExit("No ELEVENLABS_API_KEY")
 
-def get_voiceover(text, tag):
+def _get_voiceover_elevenlabs(text, tag):
     mp3 = str(WORK / f"{tag}.mp3")
     body = {"text": text.replace("\u2019", "'").replace("\u2018", "'"), "model_id": "eleven_multilingual_v2",
             "voice_settings": {"stability": 0.4, "similarity_boost": 0.8, "style": 0.4}}
@@ -56,6 +59,26 @@ def get_voiceover(text, tag):
                                  headers={"xi-api-key": _eleven_key(), "Content-Type": "application/json", "Accept": "audio/mpeg"})
     open(mp3, "wb").write(urllib.request.urlopen(req).read())
     return mp3
+
+def _get_voiceover_piper(text, tag):
+    global _PIPER_VOICE
+    from piper import PiperVoice  # optional dep; only needed for the free local engine
+    if _PIPER_VOICE is None:
+        onnx = ASSET / "voice" / "en_US-amy-medium.onnx"
+        _PIPER_VOICE = PiperVoice.load(str(onnx), str(onnx) + ".json")
+    wav_path = str(WORK / f"{tag}_piper.wav")
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    with wave.open(wav_path, "wb") as wf:
+        _PIPER_VOICE.synthesize_wav(text, wf)
+    mp3 = str(WORK / f"{tag}.mp3")
+    subprocess.run([FF, "-y", "-i", wav_path, mp3], check=True, capture_output=True)
+    return mp3
+
+def get_voiceover(text, tag):
+    """Free local Piper by default; set SEABINI_VOICE_ENGINE=elevenlabs for the paid cloud voice."""
+    if VOICE_ENGINE == "elevenlabs":
+        return _get_voiceover_elevenlabs(text, tag)
+    return _get_voiceover_piper(text, tag)
 
 def _prep_audio(mp3, tag, pitch, speed):
     clean, baby = str(WORK / f"{tag}_clean.wav"), str(WORK / f"{tag}_baby.wav")

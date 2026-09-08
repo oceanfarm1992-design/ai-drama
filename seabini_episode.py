@@ -20,3 +20,13 @@ for sc in ep["scenes"]:
 
 music = ASSET / "music" / "theme.mp3"
 build_episode(ep, out, music=str(music) if music.exists() else None)
+
+# Sidecar metadata next to the video (title/objective/scene count) — used by
+# seabini_publish.py for the showcase manifest, and handy for manual runs too.
+meta_path = pathlib.Path(out).with_suffix("").with_name(pathlib.Path(out).stem + "_meta.json")
+meta_path.write_text(json.dumps({
+    "title": ep.get("title"),
+    "series_title": ep.get("series", "SEABINI"),
+    "learning_objective": ep.get("learning_objective"),
+    "scene_count": len(ep["scenes"]),
+}, ensure_ascii=False, indent=2))
