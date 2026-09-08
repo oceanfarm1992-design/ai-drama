@@ -126,9 +126,20 @@ def _build_heads(base, ch):
     return {s: make(s) for s in ("closed", "mid", "wide", "round")}
 
 def _prep_bg(path):
-    bg = Image.open(path).convert("RGB"); s = max(W/bg.width, H/bg.height)
+    bg = Image.open(path).convert("RGB"); s = max(W/bg.width, H/bg.height) * 1.12
     bg = bg.resize((int(bg.width*s), int(bg.height*s)))
     return bg, (bg.width-W)//2, (bg.height-H)//2
+
+def _light_rays(seed):
+    random.seed(seed)
+    return [(random.randint(0, W), random.randint(55, 115), random.randint(16, 30), random.uniform(0, 6.28)) for _ in range(4)]
+
+def _draw_rays(win, rays, t):
+    ray_img = Image.new("RGBA", win.size, (0, 0, 0, 0)); d = ImageDraw.Draw(ray_img)
+    for x, rw, alpha, phase in rays:
+        sway = 45*math.sin(t*0.3+phase); top_x = x+sway; bot_x = x+sway*2.3
+        d.polygon([(top_x-rw*0.15, -20), (top_x+rw*0.15, -20), (bot_x+rw, H+20), (bot_x-rw, H+20)], fill=(255, 255, 235, alpha))
+    win.alpha_composite(ray_img)
 
 _FONT_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   # Linux / Modal
@@ -152,12 +163,16 @@ def render_scene(speaker, location, line, tag):
     cues = _cues(clean, dur); starts = np.array([c["start"] for c in cues])
     shape_at = lambda t: VMAP.get(cues[max(0, min(np.searchsorted(starts, t+0.05, side="right")-1, len(cues)-1))]["value"], "closed")
     bg, bgx, bgy = _prep_bg(bg_for(location))
+    seed = sum(ord(c) for c in tag); rays = _light_rays(seed)
     bub = Image.new("RGBA", (30, 30), (0, 0, 0, 0)); ImageDraw.Draw(bub).ellipse((2, 2, 28, 28), outline=(255, 255, 255, 200), width=2, fill=(255, 255, 255, 45))
     random.seed(7); bubbles = [(random.randint(30, W-30), random.uniform(70, 130), random.uniform(0, dur), random.uniform(0.4, 1.1)) for _ in range(11)]
     frames = []
     for i in range(int(dur*FPS)):
-        t = i/FPS; z = 1+0.04*t/dur; cw, ch2 = int(W/z), int(H/z)
-        win = bg.crop((bgx+(W-cw)//2, bgy+(H-ch2)//2, bgx+(W-cw)//2+cw, bgy+(H-ch2)//2+ch2)).resize((W, H)).convert("RGBA")
+        t = i/FPS; z = 1+0.05*t/dur; cw, ch2 = int(W/z), int(H/z)
+        panx, pany = int(18*math.sin(t*0.22)), int(6*math.sin(t*0.17+1))
+        x0 = max(0, min(bg.width-cw, bgx+(W-cw)//2+panx)); y0 = max(0, min(bg.height-ch2, bgy+(H-ch2)//2+pany))
+        win = bg.crop((x0, y0, x0+cw, y0+ch2)).resize((W, H)).convert("RGBA")
+        _draw_rays(win, rays, t)
         for bx, sp, ph, sz in bubbles: win.alpha_composite(bub.resize((int(30*sz), int(30*sz))), (bx, int(H-(sp*(t+ph)) % (H+40))))
         head = heads[shape_at(t)]; sc = 1+0.015*math.sin(t*1.5)
         im2 = head.resize((int(BW*sc), int(BH*sc))).rotate(3*math.sin(t*1.0), expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
