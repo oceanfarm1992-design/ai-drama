@@ -46,7 +46,9 @@ def _run(cmd):
 
 
 def _gh_token():
-    return os.environ.get("GH_TOKEN") or os.environ.get("SHOWCASE_TOKEN")
+    raw = os.environ.get("GH_TOKEN") or os.environ.get("SHOWCASE_TOKEN") or ""
+    # Strip BOM that PowerShell's UTF-8 encoding can inject
+    return raw.strip().lstrip("﻿")
 
 
 def _buffer_key():
@@ -171,13 +173,55 @@ def _post_all_channels(video_url: str, title: str, objective: str):
         _buffer_post(channel_id, service, video_url, caps, title)
 
 
+def _gh_api(method, path, body=None, content_type="application/json"):
+    """Call the GitHub REST API with the showcase token."""
+    token = _gh_token()
+    if not token:
+        raise RuntimeError("No GH_TOKEN / SHOWCASE_TOKEN available")
+    url = f"https://api.github.com{path}" if path.startswith("/") else path
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": content_type,
+    })
+    try:
+        return json.loads(urllib.request.urlopen(req, context=_SSL_CTX, timeout=120).read())
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode(errors="replace")
+        print(f"[GitHub API] {exc.code} {method} {url}: {err_body[:500]}")
+        raise
+
+
 def _upload_release(video_path: str, title: str) -> str:
     tag = "seabini-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    _run(["gh", "release", "create", tag, video_path,
-          "--repo", SHOWCASE_REPO,
-          "--title", title,
-          "--notes", "Auto-published by the SEABINI pipeline."])
+    token = _gh_token()
+    print(f"[Release] Creating {tag} in {SHOWCASE_REPO} (token len={len(token)})")
+
+    # 1. Create the release
+    release = _gh_api("POST", f"/repos/{SHOWCASE_REPO}/releases", {
+        "tag_name": tag,
+        "name": title,
+        "body": "Auto-published by the SEABINI pipeline.",
+    })
+    upload_url = release["upload_url"].split("{")[0]  # strip {?name,label} template
+    print(f"[Release] Created: {release['html_url']}")
+
+    # 2. Upload the video asset
     filename = pathlib.Path(video_path).name
+    file_data = pathlib.Path(video_path).read_bytes()
+    asset_url = f"{upload_url}?name={filename}"
+    req = urllib.request.Request(asset_url, data=file_data, method="POST", headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/octet-stream",
+    })
+    try:
+        asset = json.loads(urllib.request.urlopen(req, context=_SSL_CTX, timeout=300).read())
+        print(f"[Release] Uploaded asset: {asset['name']} ({asset['size']} bytes)")
+    except urllib.error.HTTPError as exc:
+        print(f"[Release] Asset upload failed: {exc.code} {exc.read().decode(errors='replace')[:300]}")
+
     return f"https://github.com/{SHOWCASE_REPO}/releases/download/{tag}/{filename}"
 
 
