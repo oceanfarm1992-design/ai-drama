@@ -14,3 +14,4 @@ re.zip
 *.mp4
 seabini_build/
 seabini_assets/music/*.wav
+manifest.json

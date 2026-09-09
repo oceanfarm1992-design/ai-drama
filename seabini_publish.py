@@ -28,8 +28,14 @@ _BUFFER_CHANNELS = {
 _CREATE_POST = """
 mutation CreatePost($input: CreatePostInput!) {
   createPost(input: $input) {
+    __typename
     ... on PostActionSuccess { post { id status } }
-    ... on PostActionError { message type }
+    ... on InvalidInputError { message }
+    ... on UnauthorizedError { message }
+    ... on UnexpectedError { message }
+    ... on NotFoundError { message }
+    ... on RestProxyError { message }
+    ... on LimitReachedError { message }
   }
 }
 """
@@ -146,14 +152,15 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
     if resp:
         errs = resp.get("errors")
         data = (resp.get("data") or {}).get("createPost") or {}
+        typename = data.get("__typename", "")
         post = data.get("post")
         err_msg = data.get("message")
         if errs:
             print(f"[Buffer:{service}] GraphQL error: {errs}")
-        elif err_msg:
-            print(f"[Buffer:{service}] API error: {err_msg} ({data.get('type')})")
-        elif post:
+        elif typename == "PostActionSuccess" and post:
             print(f"[Buffer:{service}] Queued → id={post['id']} status={post['status']}")
+        elif err_msg:
+            print(f"[Buffer:{service}] {typename}: {err_msg}")
         else:
             print(f"[Buffer:{service}] Response: {resp}")
 
