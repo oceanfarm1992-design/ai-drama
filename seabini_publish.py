@@ -14,8 +14,8 @@ try:
 except ImportError:
     _SSL_CTX = ssl.create_default_context()
 
-SERIES_TITLE  = "SEABINI"
-SHOWCASE_REPO = "oceanfarm1992-design/ai-drama-showcase"
+SERIES_TITLE = "SEABINI"
+REPO = os.environ.get("GITHUB_REPOSITORY", "oceanfarm1992-design/ai-drama-showcase")
 
 # Channel IDs confirmed 2026-09-08 via buffer_channels.py
 _BUFFER_ORG_ID = "6aa0477126e41236abff5ad7"
@@ -46,8 +46,7 @@ def _run(cmd):
 
 
 def _gh_token():
-    raw = os.environ.get("GH_TOKEN") or os.environ.get("SHOWCASE_TOKEN") or ""
-    # Strip BOM that PowerShell's UTF-8 encoding can inject
+    raw = os.environ.get("GH_TOKEN") or ""
     return raw.strip().lstrip("﻿")
 
 
@@ -129,7 +128,7 @@ def _captions(title: str, objective: str) -> dict:
 def _buffer_post(channel_id: str, service: str, video_url: str,
                  captions: dict, title: str):
     text = captions.get(service, captions["youtube"])
-    assets = [{"url": video_url, "metadata": {"title": title}}]
+    assets = [{"video": {"url": video_url, "metadata": {"title": title}}}]
     metadata = {}
     if service == "youtube":
         metadata["youtube"] = {
@@ -146,7 +145,14 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
             "title": f"SEABINI | {title} 🌊",
             "isAiGenerated": True,
         }
-    post_input = {"channelId": channel_id, "text": text, "assets": assets}
+    post_input = {
+        "channelId": channel_id,
+        "text": text,
+        "assets": assets,
+        "mode": "shareNow",
+        "schedulingType": "automatic",
+        "needsApproval": False,
+    }
     if metadata:
         post_input["metadata"] = metadata
 
@@ -196,10 +202,10 @@ def _gh_api(method, path, body=None, content_type="application/json"):
 def _upload_release(video_path: str, title: str) -> str:
     tag = "seabini-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     token = _gh_token()
-    print(f"[Release] Creating {tag} in {SHOWCASE_REPO} (token len={len(token)})")
+    print(f"[Release] Creating {tag} in {REPO} (token len={len(token)})")
 
     # 1. Create the release
-    release = _gh_api("POST", f"/repos/{SHOWCASE_REPO}/releases", {
+    release = _gh_api("POST", f"/repos/{REPO}/releases", {
         "tag_name": tag,
         "name": title,
         "body": "Auto-published by the SEABINI pipeline.",
@@ -222,7 +228,7 @@ def _upload_release(video_path: str, title: str) -> str:
     except urllib.error.HTTPError as exc:
         print(f"[Release] Asset upload failed: {exc.code} {exc.read().decode(errors='replace')[:300]}")
 
-    return f"https://github.com/{SHOWCASE_REPO}/releases/download/{tag}/{filename}"
+    return f"https://github.com/{REPO}/releases/download/{tag}/{filename}"
 
 
 def _get_manifest():
@@ -230,7 +236,7 @@ def _get_manifest():
     token = _gh_token()
     if not token:
         return {"episodes": []}, None
-    api_url = f"https://api.github.com/repos/{SHOWCASE_REPO}/contents/manifest.json"
+    api_url = f"https://api.github.com/repos/{REPO}/contents/manifest.json"
     req = urllib.request.Request(api_url, headers={
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.v3+json",
@@ -250,7 +256,7 @@ def _put_manifest(manifest_data: dict, title: str, sha=None):
     if not token:
         print("[Manifest] No token — skipping manifest update.")
         return
-    api_url = f"https://api.github.com/repos/{SHOWCASE_REPO}/contents/manifest.json"
+    api_url = f"https://api.github.com/repos/{REPO}/contents/manifest.json"
     content_b64 = base64.b64encode(
         json.dumps(manifest_data, ensure_ascii=False, indent=2).encode()
     ).decode()
@@ -272,7 +278,7 @@ def _put_manifest(manifest_data: dict, title: str, sha=None):
     )
     try:
         urllib.request.urlopen(req, context=_SSL_CTX, timeout=15)
-        print(f"[Manifest] Updated in {SHOWCASE_REPO}")
+        print(f"[Manifest] Updated in {REPO}")
     except Exception as exc:
         print(f"[Manifest] API error: {exc}")
 
