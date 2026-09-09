@@ -74,7 +74,7 @@ jobs:
 
       - name: Publish (GitHub Release + manifest commit + Buffer social posts)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SHOWCASE_TOKEN }}
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
         run: |
           TITLE=$(python -c "import json; print(json.load(open('episode_meta.json'))['title'])" 2>/dev/null || echo "SEABINI Short")

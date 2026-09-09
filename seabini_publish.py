@@ -1,13 +1,12 @@
-"""Publishes a finished SEABINI episode from within the showcase repo itself:
-uploads the video as a GitHub Release asset (a public, stable download URL),
-commits the updated manifest.json, and posts to YouTube / TikTok / Facebook
-via Buffer's GraphQL API.
+"""Publishes a finished SEABINI episode:
+uploads the video as a GitHub Release asset in ai-drama-showcase (public URL),
+updates manifest.json in ai-drama-showcase via GitHub API, and posts to
+YouTube / TikTok / Facebook via Buffer's GraphQL API.
 
-Env: GH_TOKEN (the workflow passes the automatic GITHUB_TOKEN), GITHUB_REPOSITORY
-(auto, "owner/repo"), BUFFER_API_KEY (or set in .APIs.txt buffer-secret=...).
-Run: python seabini_publish.py <video.mp4> "<title>" ["<lang>"]
+Env: GH_TOKEN (SHOWCASE_TOKEN from workflow secrets), BUFFER_API_KEY.
+Run: python seabini_publish.py <video.mp4> "<title>" ["<lang>"] ["<objective>"]
 """
-import os, sys, json, datetime, pathlib, subprocess, ssl, urllib.request
+import base64, os, sys, json, datetime, pathlib, subprocess, ssl, urllib.request
 
 try:
     import certifi
@@ -15,9 +14,8 @@ try:
 except ImportError:
     _SSL_CTX = ssl.create_default_context()
 
-SERIES_TITLE = "SEABINI"
-REPO = os.environ.get("GITHUB_REPOSITORY", "oceanfarm1992-design/ai-drama-showcase")
-MANIFEST = pathlib.Path("manifest.json")
+SERIES_TITLE  = "SEABINI"
+SHOWCASE_REPO = "oceanfarm1992-design/ai-drama-showcase"
 
 # Channel IDs confirmed 2026-09-08 via buffer_channels.py
 _BUFFER_ORG_ID = "6aa0477126e41236abff5ad7"
@@ -39,6 +37,10 @@ mutation CreatePost($input: CreatePostInput!) {
 
 def _run(cmd):
     subprocess.run(cmd, check=True)
+
+
+def _gh_token():
+    return os.environ.get("GH_TOKEN") or os.environ.get("SHOWCASE_TOKEN")
 
 
 def _buffer_key():
@@ -94,7 +96,6 @@ _HASHTAGS_YT = (
 )
 
 def _captions(title: str, objective: str) -> dict:
-    """Build per-platform SEO captions. objective is the episode's learning takeaway."""
     yt_desc = (
         f"🌊 {title} | SEABINI — Adventures Beneath the Blue!\n\n"
         f"Today Bini and friends discover: {objective}\n\n"
@@ -165,20 +166,71 @@ def _post_all_channels(video_url: str, title: str, objective: str):
 
 def _upload_release(video_path: str, title: str) -> str:
     tag = "seabini-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    _run(["gh", "release", "create", tag, video_path, "--title", title,
+    _run(["gh", "release", "create", tag, video_path,
+          "--repo", SHOWCASE_REPO,
+          "--title", title,
           "--notes", "Auto-published by the SEABINI pipeline."])
     filename = pathlib.Path(video_path).name
-    return f"https://github.com/{REPO}/releases/download/{tag}/{filename}"
+    return f"https://github.com/{SHOWCASE_REPO}/releases/download/{tag}/{filename}"
+
+
+def _get_manifest():
+    """Fetch manifest.json from ai-drama-showcase via GitHub API. Returns (dict, sha)."""
+    token = _gh_token()
+    if not token:
+        return {"episodes": []}, None
+    api_url = f"https://api.github.com/repos/{SHOWCASE_REPO}/contents/manifest.json"
+    req = urllib.request.Request(api_url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+    })
+    try:
+        resp = json.loads(urllib.request.urlopen(req, context=_SSL_CTX, timeout=15).read())
+        content = base64.b64decode(resp["content"]).decode("utf-8")
+        return json.loads(content), resp["sha"]
+    except Exception as exc:
+        print(f"[Manifest] Could not fetch existing manifest ({exc}), starting fresh.")
+        return {"episodes": []}, None
+
+
+def _put_manifest(manifest_data: dict, title: str, sha=None):
+    """Commit updated manifest.json to ai-drama-showcase via GitHub API."""
+    token = _gh_token()
+    if not token:
+        print("[Manifest] No token — skipping manifest update.")
+        return
+    api_url = f"https://api.github.com/repos/{SHOWCASE_REPO}/contents/manifest.json"
+    content_b64 = base64.b64encode(
+        json.dumps(manifest_data, ensure_ascii=False, indent=2).encode()
+    ).decode()
+    body = {
+        "message": f"Publish episode: {title}",
+        "content": content_b64,
+        "committer": {"name": "seabini-bot", "email": "seabini-bot@users.noreply.github.com"},
+    }
+    if sha:
+        body["sha"] = sha
+    req = urllib.request.Request(api_url,
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.github.v3+json",
+        },
+        method="PUT",
+    )
+    try:
+        urllib.request.urlopen(req, context=_SSL_CTX, timeout=15)
+        print(f"[Manifest] Updated in {SHOWCASE_REPO}")
+    except Exception as exc:
+        print(f"[Manifest] API error: {exc}")
 
 
 def publish(video_path: str, title: str, language: str = "en",
             objective: str = "a fun ocean discovery") -> str:
     video_url = _upload_release(video_path, title)
 
-    manifest = {"episodes": []}
-    if MANIFEST.exists():
-        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-
+    manifest, sha = _get_manifest()
     episode_number = sum(1 for e in manifest["episodes"] if e.get("series_title") == SERIES_TITLE) + 1
     manifest["episodes"].insert(0, {
         "series_title": SERIES_TITLE,
@@ -190,13 +242,7 @@ def publish(video_path: str, title: str, language: str = "en",
         "video_url": video_url,
         "published_at": datetime.datetime.utcnow().isoformat() + "Z",
     })
-    MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    _run(["git", "config", "user.name", "seabini-bot"])
-    _run(["git", "config", "user.email", "seabini-bot@users.noreply.github.com"])
-    _run(["git", "add", "manifest.json"])
-    _run(["git", "commit", "-m", f"Publish episode: {title}"])
-    _run(["git", "push", "origin", "HEAD:master"])
+    _put_manifest(manifest, title, sha)
 
     _post_all_channels(video_url, title, objective)
 
