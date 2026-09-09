@@ -90,8 +90,7 @@ _YT_TAGS = [
 ]
 
 _HASHTAGS_TT = (
-    "#SEABINI #kidsshow #preschool #oceanforkids #toddlerlearning #kidslearning "
-    "#cartoon #kidsvideos #foryoupage #fyp #kidstiktok #educational #ocean #shorts"
+    "#SEABINI #kidscartoon #cartoonforkids #kidsanimation #fyp"
 )
 _HASHTAGS_FB = (
     "#SEABINI #KidsShow #Preschool #OceanForKids #ToddlerLearning #KidsCartoon "
