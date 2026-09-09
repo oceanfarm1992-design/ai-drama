@@ -47,7 +47,17 @@ WORLD (reusable locations): {LOCATIONS}
 
 SIGNATURE PHRASES (use naturally, not all at once): "What is that?", "Let's find out!", "Let's dive in!", and ALWAYS end the episode with "See you beneath the blue!".
 
-EPISODE FORMULA (follow in order): HOOK (something interesting happens) -> QUESTION (a character gets curious and asks why) -> ADVENTURE (friends explore) -> DISCOVERY (they learn one simple thing) -> FUN ENDING -> SIGNATURE signoff.
+EPISODE FORMULA — write it as exactly these 10 beats, one scene per beat, one line each, a different speaker for each beat where natural (do not compress multiple beats into one scene; do not skip any):
+1. HOOK — something interesting is noticed.
+2. REACTION — a second character reacts or gets curious.
+3. QUESTION — a character asks why/what/how.
+4. TRAVEL — the group heads somewhere to investigate.
+5. ADVENTURE — they arrive and start exploring/observing.
+6. OBSTACLE OR TRY — something they attempt, or a small challenge along the way.
+7. CLOSER LOOK — they look closer / a character has an idea.
+8. DISCOVERY — they learn the one simple fact/takeaway.
+9. REFLECTION — a character repeats the takeaway in their own words, or the group reacts with joy/wonder.
+10. SIGNATURE ENDING — a fun goodbye that includes "See you beneath the blue!".
 
 HARD RULES (preschool safety & quality):
 - Simple words and short sentences a 2-6 year old understands.
@@ -57,6 +67,13 @@ HARD RULES (preschool safety & quality):
 - Original content only. Never imitate CoComelon, Baby Shark, or any existing show/song/character.
 - Each narration line is spoken by ONE named character. Keep lines short (good for a young narrator).
 
+SONG (every episode ends with a Bini sing-and-dance number sung in Bini's own voice):
+- MUST be about the SAME specific creature/fact/moment as this episode's story and takeaway (e.g. an episode about a starfish regrowing an arm gets a starfish song, not a generic ocean song). Never generic or reused across episodes.
+- Structure: one verse (4 short lines), then the chorus (4 short lines) sung TWICE. Count carefully: the combined lyrics text, including every line, must be between 300 and 380 characters total — no more. Keep every line under 30 characters to stay on budget.
+- Gentle, unhurried, lullaby-adjacent tempo — NOT fast or hyper. Put a blank line between every line of lyrics (this is a real pause in the sung output, not just formatting) to keep the pacing relaxed and slow.
+- Simple words, concrete objects, repetition, rhythmic phrases, positive emotions, actions kids can imitate.
+- No complicated metaphors, no dense facts crammed into the lyrics, nothing that sounds copied from an existing nursery song.
+
 Return ONLY JSON in this exact shape:
 {{
   "series": "SEABINI",
@@ -65,14 +82,15 @@ Return ONLY JSON in this exact shape:
   "learning_objective": "the one simple takeaway",
   "main_location": "one location from the world list",
   "scenes": [
-    {{"beat": "HOOK|QUESTION|ADVENTURE|DISCOVERY|ENDING",
+    {{"beat": "HOOK|REACTION|QUESTION|TRAVEL|ADVENTURE|OBSTACLE OR TRY|CLOSER LOOK|DISCOVERY|REFLECTION|SIGNATURE ENDING",
       "location": "a location from the world list",
       "speaker": "Bini|Tula|Ollo|Dodo|Pipi",
       "line": "one short spoken line",
       "visual": "short description of what we see (character + action + setting)"}}
-  ]
+  ],
+  "song": {{"title": "short song title", "lyrics": "[Verse]\\nline\\n\\nline\\n\\nline\\n\\nline\\n\\n[Chorus]\\nline\\n\\nline\\n\\nline\\n\\nline\\n\\n[Chorus]\\nline\\n\\nline\\n\\nline\\n\\nline"}}
 }}
-Use 5 to 7 scenes. The final scene's line MUST include "See you beneath the blue!"."""
+The "scenes" array MUST contain exactly 10 entries, one per beat listed above, in that order. Fewer than 10 is invalid. The final scene's line MUST include "See you beneath the blue!"."""
 
 
 def _openai_key():

@@ -1,0 +1,90 @@
+name: SEABINI Daily Episode
+
+on:
+  schedule:
+    # 08:00 UTC daily
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: 'Optional episode theme/seed'
+        required: false
+        default: ''
+
+# Lets the automatic GITHUB_TOKEN create releases and commit the manifest.
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps (ffmpeg)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Cache Rhubarb Lip Sync
+        id: rhubarb-cache
+        uses: actions/cache@v4
+        with:
+          path: rhubarb
+          key: rhubarb-1.14.0-linux
+
+      - name: Download Rhubarb Lip Sync
+        if: steps.rhubarb-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o rhubarb.zip "https://github.com/DanielSWolf/rhubarb-lip-sync/releases/download/v1.14.0/Rhubarb-Lip-Sync-1.14.0-Linux.zip"
+          mkdir -p rhubarb
+          unzip -q rhubarb.zip -d rhubarb
+          chmod +x rhubarb/Rhubarb-Lip-Sync-1.14.0-Linux/rhubarb
+
+      - name: Cache Kokoro TTS model
+        id: kokoro-cache
+        uses: actions/cache@v4
+        with:
+          path: kokoro_model
+          key: kokoro-v1.0-int8
+
+      - name: Download Kokoro TTS model
+        if: steps.kokoro-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p kokoro_model
+          curl -sL -o kokoro_model/kokoro-v1.0.int8.onnx "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.int8.onnx"
+          curl -sL -o kokoro_model/voices-v1.0.bin "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin"
+
+      - name: Install Python deps
+        run: |
+          pip install --quiet moviepy==1.0.3 "pillow<10" imageio-ffmpeg "kokoro-onnx>=0.6.0"
+
+      - name: Render episode
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+          SEABINI_RHUBARB: ${{ github.workspace }}/rhubarb/Rhubarb-Lip-Sync-1.14.0-Linux/rhubarb
+          SEABINI_VOICE_ENGINE: kokoro
+          SEABINI_KOKORO_MODEL: ${{ github.workspace }}/kokoro_model/kokoro-v1.0.int8.onnx
+          SEABINI_KOKORO_VOICES: ${{ github.workspace }}/kokoro_model/voices-v1.0.bin
+        run: |
+          python seabini_episode.py "${{ github.event.inputs.theme }}" episode.mp4
+
+      - name: Publish (GitHub Release + manifest commit + Buffer social posts)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        run: |
+          TITLE=$(python -c "import json; print(json.load(open('episode_meta.json'))['title'])" 2>/dev/null || echo "SEABINI Short")
+          OBJ=$(python -c "import json; print(json.load(open('episode_meta.json'))['learning_objective'])" 2>/dev/null || echo "a fun ocean discovery")
+          echo "Episode: $TITLE | $OBJ"
+          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ"
+
+      - name: Upload episode as workflow artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: seabini-episode
+          path: episode.mp4
+          retention-days: 7
