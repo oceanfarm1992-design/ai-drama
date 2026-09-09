@@ -261,7 +261,7 @@ def render_scene(speaker, location, line, tag, bg_override=None):
         for bx, sp, ph, sz in bubbles: win.alpha_composite(bub.resize((int(30*sz), int(30*sz))), (bx, int(H-(sp*(t+ph)) % (H+40))))
         head = heads[shape_at(t)]; sc = 1+0.015*math.sin(t*1.5)
         im2 = head.resize((int(BW*sc), int(BH*sc))).rotate(3*math.sin(t*1.0), expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
-        px, py = W/2+25*math.sin(t*0.45), H*0.42+20*math.sin(t*1.5)
+        px, py = W/2+25*math.sin(t*0.45), H*0.60+20*math.sin(t*1.5)
         win.alpha_composite(im2, (int(px-im2.width/2), int(py-im2.height/2)))
         frames.append(np.array(win.convert("RGB")))
     return frames, baby
@@ -272,6 +272,8 @@ def get_episode_bg(creature, tag):
     prompt = (
         f"cute friendly cartoon {creature} underwater ocean scene, soft pastel watercolor, "
         "coral reef, colorful fish, kawaii preschool children show style, warm sunlight rays, "
+        f"the {creature} positioned in the upper half of the frame clearly visible, "
+        "open clear water in the lower half of the frame, "
         "no text, no letters, vertical composition"
     )
     body = {"input": {"prompt": prompt, "width": W, "height": H,
@@ -334,7 +336,7 @@ def _dance_scene(song_wav, tag, bg_override=None):
         rot = 8*math.sin(beat*0.6)
         head = heads[mouth_cycle[int(t*2.2) % 4]]
         im2 = head.resize((int(BW*sc), int(BH*sc))).rotate(rot, expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
-        px, py = W/2+sway, H*0.46-bounce
+        px, py = W/2+sway, H*0.62-bounce
         win.alpha_composite(im2, (int(px-im2.width/2), int(py-im2.height/2)))
         frames.append(np.array(win.convert("RGB")))
     return frames, song_wav
