@@ -145,6 +145,10 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
             "title": f"SEABINI | {title} 🌊",
             "isAiGenerated": True,
         }
+    if service == "facebook":
+        metadata["facebook"] = {
+            "type": "reel",   # vertical short-form video → Facebook Reels
+        }
     post_input = {
         "channelId": channel_id,
         "text": text,
