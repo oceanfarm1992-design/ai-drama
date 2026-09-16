@@ -9,7 +9,7 @@ and optional background music.
 Runtime deps: moviepy, pillow<10, numpy, imageio-ffmpeg (Python) + the Rhubarb
 CLI + ffmpeg. Point SEABINI_RHUBARB at rhubarb.exe (or set it below).
 """
-import os, json, math, wave, random, subprocess, pathlib, urllib.request, tempfile, base64, time, ssl
+import os, json, math, wave, random, subprocess, pathlib, urllib.request, tempfile, time, ssl
 try:
     import certifi as _certifi; _SSL = ssl.create_default_context(cafile=_certifi.where())
 except ImportError:
@@ -107,8 +107,8 @@ def _replicate_key():
         if line.lower().startswith("replicate"): return line.split("=", 1)[1].strip()
     raise SystemExit("No REPLICATE_API_TOKEN")
 
-def _fit_lyrics(lyrics, limit=390):
-    """minimax/music-01 hard-caps lyrics at 350-400 chars and errors past that;
+def _fit_lyrics(lyrics, limit=3500):
+    """minimax/music-2.5 hard-caps lyrics at 3500 chars and errors past that;
     the writer LLM isn't reliable at precise character counting, so truncate at
     a line boundary as a safety net rather than trust the prompt alone."""
     if len(lyrics) <= limit:
@@ -120,16 +120,24 @@ def _fit_lyrics(lyrics, limit=390):
         out.append(line); total += len(line) + 1
     return "\n".join(out).strip()
 
+_SONG_VOICE_PROMPT = (
+    "Cheerful children's sing-along, preschool kids show, warm sweet young "
+    "female voice, gentle and bright, ukulele and soft percussion, playful "
+    "and bouncy, major key, clear diction, upbeat but tender"
+)
+
 def get_song(lyrics, tag):
-    """Sung closing number via Replicate's minimax/music-01, voice-anchored to
-    Bini's own Kokoro voice (seabini_assets/voice/bini_song_ref.mp3) so the
-    singing voice matches her speaking voice. ~$0.04/song."""
+    """Sung closing number via Replicate's minimax/music-2.5. Chosen over the
+    older music-01 (which supported a cloned voice_file reference) for its
+    markedly better vocal quality and emotional delivery; music-2.5 dropped
+    voice cloning in favor of describing the voice through _SONG_VOICE_PROMPT
+    instead, which is used on every episode to keep the voice consistent.
+    ~$0.05/song. See seabini-pipeline-gotchas memory for the A/B comparison
+    that led to this choice."""
     lyrics = _fit_lyrics(lyrics)
-    voice_ref = ASSET / "voice" / "sample_song_ref.mp3"
-    voice_b64 = base64.b64encode(voice_ref.read_bytes()).decode()
-    body = {"input": {"lyrics": lyrics, "voice_file": f"data:audio/mpeg;base64,{voice_b64}"}}
+    body = {"input": {"lyrics": lyrics, "prompt": _SONG_VOICE_PROMPT}}
     headers = {"Authorization": f"Bearer {_replicate_key()}", "Content-Type": "application/json", "Prefer": "wait"}
-    req = urllib.request.Request("https://api.replicate.com/v1/models/minimax/music-01/predictions",
+    req = urllib.request.Request("https://api.replicate.com/v1/models/minimax/music-2.5/predictions",
                                   data=json.dumps(body).encode(), headers=headers)
     resp = json.loads(urllib.request.urlopen(req, context=_SSL, timeout=180).read())
     poll_url = f"https://api.replicate.com/v1/predictions/{resp['id']}"
