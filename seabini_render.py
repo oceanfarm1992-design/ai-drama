@@ -34,11 +34,11 @@ VMAP = {"A": "closed", "X": "closed", "B": "mid", "G": "mid", "H": "mid", "C": "
 # push it toward a baby/funny character read (user-approved anchor: bini at
 # pitch=1.35, post_speed=0.85 — others scaled proportionally from the old table).
 CHARACTERS = {
-    "bini": dict(base="bini_base.png", cx=180, cy=284, lip=(222, 106, 114), dark=(58, 16, 24), tongue=(239, 130, 140), ms=1.0, erase_mult=1.0, face_pt=(180, 262), pitch=1.28, speed=0.86, kokoro_voice="af_heart", kokoro_speed=1.0, kokoro_pitch=1.35, kokoro_post_speed=0.85),
-    "tula": dict(base="tula_base.png", cx=216, cy=303, lip=(120, 140, 70), dark=(58, 18, 20), tongue=(185, 70, 68), ms=1.2, erase_mult=1.15, face_pt=(216, 282), pitch=1.05, speed=0.82, kokoro_voice="af_bella", kokoro_speed=1.0, kokoro_pitch=1.11, kokoro_post_speed=0.81),
-    "ollo": dict(base="ollo_base.png", cx=275, cy=262, lip=(133, 81, 189), dark=(50, 12, 22), tongue=(150, 55, 60), ms=1.15, erase_mult=1.15, face_pt=(275, 240), pitch=1.15, speed=0.95, kokoro_voice="bf_emma", kokoro_speed=1.0, kokoro_pitch=1.21, kokoro_post_speed=0.94),
-    "dodo": dict(base="dodo_base.png", cx=188, cy=235, lip=(110, 170, 200), dark=(55, 24, 28), tongue=(160, 65, 68), ms=1.4, erase_mult=1.7, face_pt=(188, 180), pitch=1.20, speed=1.04, kokoro_voice="am_fenrir", kokoro_speed=1.0, kokoro_pitch=1.27, kokoro_post_speed=1.03),
-    "pipi": dict(base="pipi_base.png", cx=165, cy=266, lip=(234, 159, 66), dark=(60, 26, 32), tongue=(170, 68, 72), ms=0.9, erase_mult=1.15, face_pt=(165, 240), pitch=1.35, speed=0.92, kokoro_voice="af_nicole", kokoro_speed=1.0, kokoro_pitch=1.42, kokoro_post_speed=0.91),
+    "bini": dict(base="bini_base.png", cx=180, cy=284, lip=(222, 106, 114), dark=(58, 16, 24), tongue=(239, 130, 140), ms=1.0, erase_mult=1.0, face_pt=(180, 262), eye_l=(126, 235), eye_r=(248, 232), blink_ready=True, pitch=1.28, speed=0.86, kokoro_voice="af_heart", kokoro_speed=1.0, kokoro_pitch=1.35, kokoro_post_speed=0.85),
+    "tula": dict(base="tula_base.png", cx=216, cy=303, lip=(120, 140, 70), dark=(58, 18, 20), tongue=(185, 70, 68), ms=1.2, erase_mult=1.15, face_pt=(216, 282), eye_l=(149, 210), eye_r=(284, 212), blink_ready=False, pitch=1.05, speed=0.82, kokoro_voice="af_bella", kokoro_speed=1.0, kokoro_pitch=1.11, kokoro_post_speed=0.81),
+    "ollo": dict(base="ollo_base.png", cx=275, cy=262, lip=(133, 81, 189), dark=(50, 12, 22), tongue=(150, 55, 60), ms=1.15, erase_mult=1.15, face_pt=(275, 240), eye_l=(169, 174), eye_r=(367, 171), blink_ready=False, pitch=1.15, speed=0.95, kokoro_voice="bf_emma", kokoro_speed=1.0, kokoro_pitch=1.21, kokoro_post_speed=0.94),
+    "dodo": dict(base="dodo_base.png", cx=188, cy=235, lip=(110, 170, 200), dark=(55, 24, 28), tongue=(160, 65, 68), ms=1.4, erase_mult=1.7, face_pt=(188, 180), eye_l=(106, 139), eye_r=(251, 141), blink_ready=False, pitch=1.20, speed=1.04, kokoro_voice="am_fenrir", kokoro_speed=1.0, kokoro_pitch=1.27, kokoro_post_speed=1.03),
+    "pipi": dict(base="pipi_base.png", cx=165, cy=266, lip=(234, 159, 66), dark=(60, 26, 32), tongue=(170, 68, 72), ms=0.9, erase_mult=1.15, face_pt=(165, 240), eye_l=(64, 195), eye_r=(259, 197), blink_ready=False, pitch=1.35, speed=0.92, kokoro_voice="af_nicole", kokoro_speed=1.0, kokoro_pitch=1.42, kokoro_post_speed=0.91),
 }
 VOICE_ID = "MF3mGyEYCl7XYWbV9V6O"  # ElevenLabs "Elli"; pitch/speed per character above
 LOC_BG = {"rainbow reef": "reef.png", "seagrass garden": "seagrass.png", "shell beach": "starfish.png",
@@ -212,6 +212,50 @@ def _build_heads(base, ch):
         return h
     return {s: make(s) for s in ("closed", "mid", "wide", "round")}
 
+_EYELID_COLOR = (40, 40, 46)  # neutral near-black; each character's own
+                                # "dark" is tuned for mouth interior (often a
+                                # warm maroon), which reads wrong on eyelids
+
+def _blink_frame(head, ch):
+    """Returns a copy of an already mouth-composited head with both eyes
+    replaced by a closed-eyelid line, using the same gradient-fill erase
+    technique _build_heads uses for the mouth (sample skin tone just above/
+    below the patch so the erase blends instead of leaving a flat blob).
+    Patch base size is measured against Bini's ~50x55px eye whites (ms=1.0),
+    then scaled by the character's own `ms` (mouth-scale) as a proxy for
+    overall facial-feature size, since bigger-mouthed characters (dodo,
+    ollo, tula) also draw with proportionally bigger eyes."""
+    es = ch["ms"]  # eye-patch scale, piggybacking on the existing per-character mouth scale
+    hw, hh = int(34 * es), int(34 * es)
+    h = head.copy()
+    for (ex, ey) in (ch["eye_l"], ch["eye_r"]):
+        ex0, ey0, ex1, ey1 = ex-hw, ey-hh, ex+hw, ey+hh
+        top_c = h.getpixel((ex, max(0, ey0-4)))[:3]
+        bot_c = h.getpixel((ex, min(h.height-1, ey1+4)))[:3]
+        patch = Image.new("RGB", (ex1-ex0, ey1-ey0))
+        for row in range(patch.height):
+            f = row/max(1, patch.height-1); col = tuple(int(top_c[i]+(bot_c[i]-top_c[i])*f) for i in range(3))
+            ImageDraw.Draw(patch).line((0, row, patch.width, row), fill=col)
+        m = Image.new("L", patch.size, 0); ImageDraw.Draw(m).ellipse((0, 0, patch.width, patch.height), fill=255)
+        layer = Image.new("RGBA", h.size, (0, 0, 0, 0)); layer.paste(patch, (ex0, ey0), m.filter(ImageFilter.GaussianBlur(3)))
+        h.alpha_composite(layer)
+        aw, ah = int(24 * es), int(8 * es)
+        ImageDraw.Draw(h).arc((ex-aw, ey-ah, ex+aw, ey+int(12*es)), 15, 165, fill=_EYELID_COLOR, width=3)
+    return h
+
+def _blink_times(dur, seed):
+    """Deterministic (seeded per-scene) natural-feeling blink schedule:
+    first blink after 0.8-2.5s, then every 2.5-4.5s thereafter."""
+    random.seed(seed + 1)  # +1 so it doesn't reuse _light_rays' sequence
+    times, t = [], random.uniform(0.8, 2.5)
+    while t < dur:
+        times.append(t)
+        t += random.uniform(2.5, 4.5)
+    return times
+
+def _is_blinking(t, blink_times, blink_dur=0.12):
+    return any(bt <= t < bt + blink_dur for bt in blink_times)
+
 def _prep_bg(path):
     bg = Image.open(path).convert("RGB"); s = max(W/bg.width, H/bg.height) * 1.12
     bg = bg.resize((int(bg.width*s), int(bg.height*s)))
@@ -257,6 +301,7 @@ def render_scene(speaker, location, line, tag, bg_override=None):
     shape_at = lambda t: VMAP.get(cues[max(0, min(np.searchsorted(starts, t+0.05, side="right")-1, len(cues)-1))]["value"], "closed")
     bg, bgx, bgy = _prep_bg(bg_override or bg_for(location))
     seed = sum(ord(c) for c in tag); rays = _light_rays(seed)
+    blink_times = _blink_times(dur, seed)
     bub = Image.new("RGBA", (30, 30), (0, 0, 0, 0)); ImageDraw.Draw(bub).ellipse((2, 2, 28, 28), outline=(255, 255, 255, 200), width=2, fill=(255, 255, 255, 45))
     random.seed(7); bubbles = [(random.randint(30, W-30), random.uniform(70, 130), random.uniform(0, dur), random.uniform(0.4, 1.1)) for _ in range(11)]
     frames = []
@@ -267,7 +312,9 @@ def render_scene(speaker, location, line, tag, bg_override=None):
         win = bg.crop((x0, y0, x0+cw, y0+ch2)).resize((W, H)).convert("RGBA")
         _draw_rays(win, rays, t)
         for bx, sp, ph, sz in bubbles: win.alpha_composite(bub.resize((int(30*sz), int(30*sz))), (bx, int(H-(sp*(t+ph)) % (H+40))))
-        head = heads[shape_at(t)]; sc = 1+0.015*math.sin(t*1.5)
+        head = heads[shape_at(t)]
+        if ch.get("blink_ready") and _is_blinking(t, blink_times): head = _blink_frame(head, ch)
+        sc = 1+0.015*math.sin(t*1.5)
         im2 = head.resize((int(BW*sc), int(BH*sc))).rotate(3*math.sin(t*1.0), expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
         px, py = W/2+25*math.sin(t*0.45), H*0.60+20*math.sin(t*1.5)
         win.alpha_composite(im2, (int(px-im2.width/2), int(py-im2.height/2)))
@@ -328,6 +375,7 @@ def _dance_scene(song_wav, tag, bg_override=None):
     wf = wave.open(song_wav, "rb"); dur = wf.getnframes()/wf.getframerate(); wf.close()
     bg, bgx, bgy = _prep_bg(bg_override or bg_for("Rainbow Reef"))
     seed = sum(ord(c) for c in tag); rays = _light_rays(seed)
+    blink_times = _blink_times(dur, seed)
     bub = Image.new("RGBA", (30, 30), (0, 0, 0, 0)); ImageDraw.Draw(bub).ellipse((2, 2, 28, 28), outline=(255, 255, 255, 200), width=2, fill=(255, 255, 255, 45))
     random.seed(11); bubbles = [(random.randint(30, W-30), random.uniform(70, 130), random.uniform(0, dur), random.uniform(0.4, 1.1)) for _ in range(14)]
     mouth_cycle = ["closed", "wide", "round", "mid"]
@@ -343,6 +391,7 @@ def _dance_scene(song_wav, tag, bg_override=None):
         bounce = 30*abs(math.sin(beat)); sway = 26*math.sin(beat*0.6); sc = 1+0.06*abs(math.sin(beat))
         rot = 8*math.sin(beat*0.6)
         head = heads[mouth_cycle[int(t*2.2) % 4]]
+        if _is_blinking(t, blink_times): head = _blink_frame(head, ch)
         im2 = head.resize((int(BW*sc), int(BH*sc))).rotate(rot, expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
         px, py = W/2+sway, H*0.62-bounce
         win.alpha_composite(im2, (int(px-im2.width/2), int(py-im2.height/2)))
