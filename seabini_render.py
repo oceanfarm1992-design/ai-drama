@@ -398,16 +398,20 @@ def _dance_scene(song_wav, tag, bg_override=None):
         frames.append(np.array(win.convert("RGB")))
     return frames, song_wav
 
-def _card(title, sub, dur=1.8):
+def _card(title, sub, dur=1.8, title_size=None):
     bg, bgx, bgy = _prep_bg(bg_for("Rainbow Reef")); frame0 = bg.crop((bgx, bgy, bgx+W, bgy+H)).convert("RGBA")
     head = Image.open(str(ASSET / "characters" / "bini_base.png")).convert("RGBA")
     s = (TH*0.9)/head.height; head = head.resize((int(head.width*s), int(TH*0.9)))
+    # Auto-shrink long titles ("SEABINI" fits fine at 118; longer titles like
+    # "Bini's Real Ocean" need a smaller size or they clip past frame edges.
+    if title_size is None:
+        title_size = 118 if len(title) <= 8 else max(56, int(118 * 8 / len(title)))
     frames = []
     for i in range(int(dur*FPS)):
         t = i/FPS; f = frame0.copy()
         f.alpha_composite(head, (int(W/2-head.width/2), int(H*0.5-head.height/2+12*math.sin(t*1.6))))
         d = ImageDraw.Draw(f)
-        d.text((W/2, 150), title, anchor="mm", font=_font(118), fill=(255, 255, 255), stroke_width=6, stroke_fill=(30, 90, 160))
+        d.text((W/2, 150), title, anchor="mm", font=_font(title_size), fill=(255, 255, 255), stroke_width=6, stroke_fill=(30, 90, 160))
         d.text((W/2, 250), sub, anchor="mm", font=_font(42), fill=(255, 255, 255), stroke_width=3, stroke_fill=(30, 90, 160))
         frames.append(np.array(f.convert("RGB")))
     return frames, None

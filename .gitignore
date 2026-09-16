@@ -15,3 +15,4 @@ re.zip
 seabini_build/
 seabini_assets/music/*.wav
 manifest.json
+episode_meta.json
