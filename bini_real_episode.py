@@ -48,14 +48,15 @@ def _pick_theme(theme):
     return random.choice(pool or CREATURES)
 
 
-def build_real_episode(theme, out_path):
+def build_real_episode(theme, out_path, character="bini"):
     theme = _pick_theme(theme)
-    episode = generate_real_episode(theme)
+    episode = generate_real_episode(theme, character)
     creature = episode["creature"]
-    title = episode.get("title", f"Bini's Real Ocean: {creature}")
-    print(f"EPISODE: {title} ({creature})")
+    title = episode.get("title", f"{character.title()}'s Real Ocean: {creature}")
+    print(f"EPISODE: {title} ({creature}) — narrated by {character}")
 
-    segments = [sr._card(SERIES_TITLE, f"A closer look: {creature}")]
+    segments = [sr._card(f"{character.title()}'s Real Ocean", f"A closer look: {creature}")]
+    segment_videos = []
     for i, seg in enumerate(episode["segments"]):
         query = seg.get("search_query", creature)
         narration = seg["narration"]
@@ -64,8 +65,9 @@ def build_real_episode(theme, out_path):
         if not video_path:
             print(f"    no footage found, skipping this segment")
             continue
-        frames, wav = brr.render_real_scene(narration, video_path, f"seg{i}")
+        frames, wav = brr.render_real_scene(narration, video_path, f"seg{i}", character)
         segments.append((frames, wav))
+        segment_videos.append(video_path)
         print(f"    rendered {len(frames)} frames")
 
     if len(segments) <= 1:
@@ -98,7 +100,10 @@ def build_real_episode(theme, out_path):
         print("generating song...")
         song_mp3 = sr.get_song(song["lyrics"], "realsong0")
         song_wav = sr._song_to_wav(song_mp3, "realsong0")
-        song_frames, _ = sr._dance_scene(song_wav, "realsong0")
+        if segment_videos:
+            song_frames, _ = brr.render_real_dance_scene(song_wav, segment_videos[0], "realsong0", character)
+        else:
+            song_frames, _ = sr._dance_scene(song_wav, "realsong0")
         n = int(round(len(song_frames) / sr.FPS * sr.SR))
         song_audio = sr._wav_samples(song_wav, n).astype(np.float32)
         all_frames = all_frames + song_frames
@@ -120,6 +125,7 @@ def build_real_episode(theme, out_path):
     print(f"wrote {out_path} ({dur}s)")
 
     meta = {"title": title, "creature": creature, "series_title": SERIES_TITLE,
+             "character": character, "narrator": character.title(),
              "learning_objective": episode["segments"][0]["narration"] if episode["segments"] else ""}
     with open("episode_meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
@@ -129,4 +135,5 @@ def build_real_episode(theme, out_path):
 if __name__ == "__main__":
     theme = sys.argv[1] if len(sys.argv) > 1 else ""
     out = sys.argv[2] if len(sys.argv) > 2 else "episode.mp4"
-    build_real_episode(theme, out)
+    character = sys.argv[3] if len(sys.argv) > 3 else "bini"
+    build_real_episode(theme, out, character)

@@ -2,18 +2,25 @@ name: Bini's Real Ocean Daily Episode
 
 on:
   schedule:
-    # Two episodes per day, both deliberately off-hour (GitHub's own docs
-    # warn crons pinned to :00 are most likely to be delayed/dropped under
-    # platform-wide load) and well spread apart (12h+) for both scheduling
-    # safety and audience-timezone coverage.
-    - cron: '21 14 * * *'   # ~14:21 UTC
-    - cron: '47 3 * * *'    # ~03:47 UTC
+    # One episode per character per day, all deliberately off-hour (GitHub's
+    # own docs warn crons pinned to :00 are most likely to be delayed/dropped
+    # under platform-wide load) and irregularly spaced (not evenly divided)
+    # across the day for both scheduling safety and audience-timezone spread.
+    - cron: '15 2 * * *'    # ~02:15 UTC - Bini (with song)
+    - cron: '40 6 * * *'    # ~06:40 UTC - Tula
+    - cron: '55 10 * * *'   # ~10:55 UTC - Ollo
+    - cron: '25 15 * * *'   # ~15:25 UTC - Dodo
+    - cron: '10 20 * * *'   # ~20:10 UTC - Pipi
   workflow_dispatch:
     inputs:
       theme:
         description: 'Optional creature/theme seed'
         required: false
         default: ''
+      character:
+        description: 'Narrator: bini, tula, ollo, dodo, or pipi'
+        required: false
+        default: 'bini'
 
 # Lets the automatic GITHUB_TOKEN create releases and commit the manifest.
 permissions:
@@ -28,6 +35,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Determine narrator for this run
+        id: narrator
+        run: |
+          case "${{ github.event.schedule }}" in
+            '15 2 * * *')  echo "name=bini" >> "$GITHUB_OUTPUT" ;;
+            '40 6 * * *')  echo "name=tula" >> "$GITHUB_OUTPUT" ;;
+            '55 10 * * *') echo "name=ollo" >> "$GITHUB_OUTPUT" ;;
+            '25 15 * * *') echo "name=dodo" >> "$GITHUB_OUTPUT" ;;
+            '10 20 * * *') echo "name=pipi" >> "$GITHUB_OUTPUT" ;;
+            *) echo "name=${{ github.event.inputs.character || 'bini' }}" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Install system deps (ffmpeg)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -76,7 +95,7 @@ jobs:
           SEABINI_KOKORO_MODEL: ${{ github.workspace }}/kokoro_model/kokoro-v1.0.int8.onnx
           SEABINI_KOKORO_VOICES: ${{ github.workspace }}/kokoro_model/voices-v1.0.bin
         run: |
-          python bini_real_episode.py "${{ github.event.inputs.theme }}" episode.mp4
+          python bini_real_episode.py "${{ github.event.inputs.theme }}" episode.mp4 "${{ steps.narrator.outputs.name }}"
 
       - name: Publish (GitHub Release + manifest commit + Buffer social posts)
         env:
@@ -86,8 +105,9 @@ jobs:
           TITLE=$(python -c "import json; print(json.load(open('episode_meta.json'))['title'])" 2>/dev/null || echo "Bini's Real Ocean")
           OBJ=$(python -c "import json; print(json.load(open('episode_meta.json'))['learning_objective'])" 2>/dev/null || echo "a real look at ocean life")
           SERIES=$(python -c "import json; print(json.load(open('episode_meta.json'))['series_title'])" 2>/dev/null || echo "Bini's Real Ocean")
-          echo "Episode: $TITLE | $OBJ"
-          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ" "$SERIES"
+          NARRATOR=$(python -c "import json; print(json.load(open('episode_meta.json'))['narrator'])" 2>/dev/null || echo "Bini")
+          echo "Episode: $TITLE | $OBJ | narrator=$NARRATOR"
+          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ" "$SERIES" "$NARRATOR"
 
       - name: Upload episode as workflow artifact (backup)
         uses: actions/upload-artifact@v4

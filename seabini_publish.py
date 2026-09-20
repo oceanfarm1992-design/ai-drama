@@ -101,24 +101,24 @@ _HASHTAGS_YT = (
     "#SeaAnimals #KidsShow #Shorts #ChildrensContent #EducationalKids"
 )
 
-def _captions(title: str, objective: str, series_title: str = "SEABINI") -> dict:
+def _captions(title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini") -> dict:
     if series_title == "Bini's Real Ocean":
         yt_desc = (
             f"🌊 {title} | Bini's Real Ocean — a closer look at real sea life!\n\n"
             f"{objective}\n\n"
-            "Bini's Real Ocean is a preschool-friendly series (ages 2–6) where Bini "
+            f"Bini's Real Ocean is a preschool-friendly series (ages 2–6) where {narrator} "
             "narrates real underwater footage of ocean animals. 🐠🦀🪼\n\n"
             "✅ Safe for kids  ✅ Real nature footage  ✅ New episode every day\n\n"
             + _HASHTAGS_YT
         )
         tt_text = (
-            f"🌊 {title}! Join Bini for a real look at ocean life! "
+            f"🌊 {title}! Join {narrator} for a real look at ocean life! "
             f"{objective} 🐠 New episode daily! " + _HASHTAGS_TT
         )
         fb_text = (
             f"🌊 New Bini's Real Ocean episode: {title}!\n\n"
             f"{objective} 🐠\n\n"
-            "Real ocean footage with Bini as your guide, every day! "
+            f"Real ocean footage with {narrator} as your guide, every day! "
             "Perfect for little ones ages 2–6. Share with a parent today! 💙\n\n"
             + _HASHTAGS_FB
         )
@@ -198,8 +198,8 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
             print(f"[Buffer:{service}] Response: {resp}")
 
 
-def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI"):
-    caps = _captions(title, objective, series_title)
+def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini"):
+    caps = _captions(title, objective, series_title, narrator)
     for service, channel_id in _BUFFER_CHANNELS.items():
         _buffer_post(channel_id, service, video_url, caps, title)
 
@@ -310,7 +310,8 @@ def _put_manifest(manifest_data: dict, title: str, sha=None):
 
 def publish(video_path: str, title: str, language: str = "en",
             objective: str = "a fun ocean discovery",
-            series_title: str = SERIES_TITLE) -> str:
+            series_title: str = SERIES_TITLE,
+            narrator: str = "Bini") -> str:
     video_url = _upload_release(video_path, title)
 
     manifest, sha = _get_manifest()
@@ -318,6 +319,7 @@ def publish(video_path: str, title: str, language: str = "en",
     manifest["episodes"].insert(0, {
         "series_title": series_title,
         "title": title,
+        "narrator": narrator,
         "episode_number": episode_number,
         "series_length": episode_number,
         "language": language,
@@ -327,7 +329,7 @@ def publish(video_path: str, title: str, language: str = "en",
     })
     _put_manifest(manifest, title, sha)
 
-    _post_all_channels(video_url, title, objective, series_title)
+    _post_all_channels(video_url, title, objective, series_title, narrator)
 
     return video_url
 
@@ -338,4 +340,5 @@ if __name__ == "__main__":
     language = sys.argv[3] if len(sys.argv) > 3 else "en"
     objective = sys.argv[4] if len(sys.argv) > 4 else "a fun ocean discovery"
     series_title = sys.argv[5] if len(sys.argv) > 5 else SERIES_TITLE
-    print("PUBLISHED:", publish(video, title, language, objective, series_title))
+    narrator = sys.argv[6] if len(sys.argv) > 6 else "Bini"
+    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator))
