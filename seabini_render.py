@@ -103,9 +103,11 @@ def _get_voiceover_kokoro(text, tag, voice, speed):
 def _replicate_key():
     k = os.environ.get("REPLICATE_API_TOKEN")
     if k: return k
-    for line in (HERE / ".APIs.txt").read_text().splitlines():
-        if line.lower().startswith("replicate"): return line.split("=", 1)[1].strip()
-    raise SystemExit("No REPLICATE_API_TOKEN")
+    apis = HERE / ".APIs.txt"
+    if apis.exists():
+        for line in apis.read_text().splitlines():
+            if line.lower().startswith("replicate"): return line.split("=", 1)[1].strip()
+    raise SystemExit("No REPLICATE_API_TOKEN (set the env var or add replicate-secret=... to .APIs.txt)")
 
 def _fit_lyrics(lyrics, limit=3500):
     """minimax/music-2.5 hard-caps lyrics at 3500 chars and errors past that;
