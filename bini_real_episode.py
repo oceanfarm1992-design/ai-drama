@@ -6,19 +6,50 @@ Run: python bini_real_episode.py ["optional theme"] out.mp4
 Mirrors seabini_render.build_episode()'s stitching pattern so both series
 produce consistent output (same W/H/FPS, same audio-mixing approach).
 """
-import json, sys, wave
+import json, random, sys, urllib.request, wave
 import numpy as np
 from moviepy.editor import ImageSequenceClip
 
 import seabini_render as sr
 import bini_real_footage as brf
 import bini_real_render as brr
-from bini_real_script import generate_real_episode
+from bini_real_script import CREATURES, generate_real_episode
 
 SERIES_TITLE = "Bini's Real Ocean"
+_MANIFEST_URL = "https://raw.githubusercontent.com/oceanfarm1992-design/ai-drama-showcase/master/manifest.json"
+
+
+def _recent_creature():
+    """Best-effort: the most recent Bini's Real Ocean creature, so back-to-
+    back runs (2x/day) don't repeat it. Public repo, no auth needed; any
+    failure here just means no exclusion, not a hard error."""
+    try:
+        data = json.loads(urllib.request.urlopen(_MANIFEST_URL, context=sr._SSL, timeout=10).read())
+        for ep in data.get("episodes", []):
+            if ep.get("series_title") == SERIES_TITLE:
+                title = ep.get("title", "").lower()
+                for c in CREATURES:
+                    if c in title:
+                        return c
+                break
+    except Exception:
+        pass
+    return None
+
+
+def _pick_theme(theme):
+    """The LLM is unreliable at picking a genuinely random creature when
+    just asked to "pick any" — it's primed by its own prompt describing
+    Bini as a seahorse and gravitates there. Pick uniformly at random
+    ourselves instead, excluding whatever the last episode covered."""
+    if theme:
+        return theme
+    pool = [c for c in CREATURES if c != _recent_creature()]
+    return random.choice(pool or CREATURES)
 
 
 def build_real_episode(theme, out_path):
+    theme = _pick_theme(theme)
     episode = generate_real_episode(theme)
     creature = episode["creature"]
     title = episode.get("title", f"Bini's Real Ocean: {creature}")
