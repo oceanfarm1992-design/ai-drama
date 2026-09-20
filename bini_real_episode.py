@@ -126,6 +126,7 @@ def build_real_episode(theme, out_path, character="bini"):
 
     meta = {"title": title, "creature": creature, "series_title": SERIES_TITLE,
              "character": character, "narrator": character.title(),
+             "search_hook": episode.get("search_hook", ""),
              "learning_objective": episode["segments"][0]["narration"] if episode["segments"] else ""}
     with open("episode_meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)

@@ -101,10 +101,15 @@ _HASHTAGS_YT = (
     "#SeaAnimals #KidsShow #Shorts #ChildrensContent #EducationalKids"
 )
 
-def _captions(title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini") -> dict:
+def _captions(title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini", search_hook: str = "") -> dict:
     if series_title == "Bini's Real Ocean":
+        # Lead with the question exactly as a curious viewer would type it
+        # into search — this is the actual SEO lever (matching real search
+        # phrasing), not the hashtag list, which TikTok/YouTube weight far
+        # less than caption + spoken-audio text for surfacing search results.
+        hook_line = f"{search_hook[0].upper()}{search_hook[1:]}?\n\n" if search_hook else ""
         yt_desc = (
-            f"🌊 {title} | Bini's Real Ocean — a closer look at real sea life!\n\n"
+            f"🌊 {hook_line}{title} | Bini's Real Ocean — a closer look at real sea life!\n\n"
             f"{objective}\n\n"
             f"Bini's Real Ocean is a preschool-friendly series (ages 2–6) where {narrator} "
             "narrates real underwater footage of ocean animals. 🐠🦀🪼\n\n"
@@ -112,11 +117,11 @@ def _captions(title: str, objective: str, series_title: str = "SEABINI", narrato
             + _HASHTAGS_YT
         )
         tt_text = (
-            f"🌊 {title}! Join {narrator} for a real look at ocean life! "
+            f"{hook_line}🌊 {title}! Join {narrator} for a real look at ocean life! "
             f"{objective} 🐠 New episode daily! " + _HASHTAGS_TT
         )
         fb_text = (
-            f"🌊 New Bini's Real Ocean episode: {title}!\n\n"
+            f"🌊 {hook_line}New Bini's Real Ocean episode: {title}!\n\n"
             f"{objective} 🐠\n\n"
             f"Real ocean footage with {narrator} as your guide, every day! "
             "Perfect for little ones ages 2–6. Share with a parent today! 💙\n\n"
@@ -198,8 +203,8 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
             print(f"[Buffer:{service}] Response: {resp}")
 
 
-def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini"):
-    caps = _captions(title, objective, series_title, narrator)
+def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini", search_hook: str = ""):
+    caps = _captions(title, objective, series_title, narrator, search_hook)
     for service, channel_id in _BUFFER_CHANNELS.items():
         _buffer_post(channel_id, service, video_url, caps, title)
 
@@ -311,7 +316,8 @@ def _put_manifest(manifest_data: dict, title: str, sha=None):
 def publish(video_path: str, title: str, language: str = "en",
             objective: str = "a fun ocean discovery",
             series_title: str = SERIES_TITLE,
-            narrator: str = "Bini") -> str:
+            narrator: str = "Bini",
+            search_hook: str = "") -> str:
     video_url = _upload_release(video_path, title)
 
     manifest, sha = _get_manifest()
@@ -324,12 +330,13 @@ def publish(video_path: str, title: str, language: str = "en",
         "series_length": episode_number,
         "language": language,
         "learning_objective": objective,
+        "search_hook": search_hook,
         "video_url": video_url,
         "published_at": datetime.datetime.utcnow().isoformat() + "Z",
     })
     _put_manifest(manifest, title, sha)
 
-    _post_all_channels(video_url, title, objective, series_title, narrator)
+    _post_all_channels(video_url, title, objective, series_title, narrator, search_hook)
 
     return video_url
 
@@ -341,4 +348,5 @@ if __name__ == "__main__":
     objective = sys.argv[4] if len(sys.argv) > 4 else "a fun ocean discovery"
     series_title = sys.argv[5] if len(sys.argv) > 5 else SERIES_TITLE
     narrator = sys.argv[6] if len(sys.argv) > 6 else "Bini"
-    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator))
+    search_hook = sys.argv[7] if len(sys.argv) > 7 else ""
+    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator, search_hook))

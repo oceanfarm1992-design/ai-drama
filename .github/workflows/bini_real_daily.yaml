@@ -106,8 +106,9 @@ jobs:
           OBJ=$(python -c "import json; print(json.load(open('episode_meta.json'))['learning_objective'])" 2>/dev/null || echo "a real look at ocean life")
           SERIES=$(python -c "import json; print(json.load(open('episode_meta.json'))['series_title'])" 2>/dev/null || echo "Bini's Real Ocean")
           NARRATOR=$(python -c "import json; print(json.load(open('episode_meta.json'))['narrator'])" 2>/dev/null || echo "Bini")
-          echo "Episode: $TITLE | $OBJ | narrator=$NARRATOR"
-          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ" "$SERIES" "$NARRATOR"
+          HOOK=$(python -c "import json; print(json.load(open('episode_meta.json')).get('search_hook',''))" 2>/dev/null || echo "")
+          echo "Episode: $TITLE | $OBJ | narrator=$NARRATOR | hook=$HOOK"
+          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ" "$SERIES" "$NARRATOR" "$HOOK"
 
       - name: Upload episode as workflow artifact (backup)
         uses: actions/upload-artifact@v4

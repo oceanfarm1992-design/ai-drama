@@ -71,10 +71,21 @@ HARD RULES (preschool safety & footage-search accuracy):
   60-100 words total).
 - Facts must be true and simple. Prefer well-known, easily-verified facts.{song_section}
 
+SEARCH SEO (how real people type into TikTok/YouTube search — this drives
+whether the algorithm surfaces the video to people actively searching):
+- Write "search_hook": the episode's single most interesting fact, phrased
+  EXACTLY the way a curious parent or kid would type it into a search bar.
+  Prefer a genuine question starting with "why", "how", or "what" (e.g.
+  "why do jellyfish glow", "how does an octopus change color", "why do
+  starfish have five arms") over a statement. Lowercase, no punctuation,
+  6-10 words, no creature-name-only queries (too generic/competitive) —
+  it must name the SPECIFIC behavior/fact from this episode.
+
 Return ONLY JSON in this exact shape:
 {{
   "creature": "the creature name, lowercase, simple (e.g. \\"jellyfish\\")",
   "title": "short episode title, e.g. \\"Jellyfish: A Closer Look\\"",
+  "search_hook": "the search-style question, e.g. \\"why do jellyfish glow in the dark\\"",
   "segments": [
     {{"behavior": "short behavior label, e.g. swimming",
      "search_query": "2-4 word visual search phrase for stock footage",
