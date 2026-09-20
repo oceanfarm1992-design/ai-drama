@@ -44,6 +44,13 @@ HARD RULES (preschool safety & footage-search accuracy):
   seconds combined (roughly 60-100 words total).
 - Facts must be true and simple. Prefer well-known, easily-verified facts.
 
+SONG (every episode ends with a Bini sing-and-dance number sung in Bini's own voice):
+- MUST be about the SAME creature as this episode (e.g. a jellyfish episode gets a jellyfish song). Never generic or reused across episodes.
+- Structure: one verse (4 short lines), then the chorus (4 short lines) sung TWICE. Combined lyrics text, including every line, must be between 300 and 400 characters total. Keep every line under 30 characters.
+- Gentle, unhurried, lullaby-adjacent tempo — NOT fast or hyper. Put a blank line between every line of lyrics (a real pause in the sung output, not just formatting).
+- Simple words, concrete objects, repetition, positive emotions, actions kids can imitate.
+- No complicated metaphors, no dense facts crammed into the lyrics.
+
 Return ONLY JSON in this exact shape:
 {
   "creature": "the creature name, lowercase, simple (e.g. \\"jellyfish\\")",
@@ -52,7 +59,8 @@ Return ONLY JSON in this exact shape:
     {"behavior": "short behavior label, e.g. swimming",
      "search_query": "2-4 word visual search phrase for stock footage",
      "narration": "what Bini says over this footage"}
-  ]
+  ],
+  "song": {"title": "short song title", "lyrics": "[Verse]\\nline\\n\\nline\\n\\nline\\n\\nline\\n\\n[Chorus]\\nline\\n\\nline\\n\\nline\\n\\nline\\n\\n[Chorus]\\nline\\n\\nline\\n\\nline\\n\\nline"}
 }
 The "segments" array must have exactly 3 or 4 entries."""
 

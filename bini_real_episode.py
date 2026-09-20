@@ -62,6 +62,18 @@ def build_real_episode(theme, out_path):
             m = np.tile(a, (reps, 1))[:len(narration_audio)]
         narration_audio = np.clip(narration_audio + m.astype(np.float32) * 0.15, -32768, 32767)
 
+    song = episode.get("song")
+    if song and song.get("lyrics"):
+        print("generating song...")
+        song_mp3 = sr.get_song(song["lyrics"], "realsong0")
+        song_wav = sr._song_to_wav(song_mp3, "realsong0")
+        song_frames, _ = sr._dance_scene(song_wav, "realsong0")
+        n = int(round(len(song_frames) / sr.FPS * sr.SR))
+        song_audio = sr._wav_samples(song_wav, n).astype(np.float32)
+        all_frames = all_frames + song_frames
+        narration_audio = np.vstack([narration_audio, song_audio])
+        print("added song:", song.get("title"), round(len(song_frames) / sr.FPS, 1), "s")
+
     final = narration_audio.astype(np.int16)
     wav_path = str(sr.WORK / "real_episode_audio.wav")
     ww = wave.open(wav_path, "wb")

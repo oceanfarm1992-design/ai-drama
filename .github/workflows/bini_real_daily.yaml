@@ -2,10 +2,12 @@ name: Bini's Real Ocean Daily Episode
 
 on:
   schedule:
-    # 14:21 UTC daily — deliberately off-hour (same reasoning as the main
-    # SEABINI workflow) and a different hour from it too, so the two daily
-    # jobs don't compete for the same GitHub Actions scheduling window.
-    - cron: '21 14 * * *'
+    # Two episodes per day, both deliberately off-hour (GitHub's own docs
+    # warn crons pinned to :00 are most likely to be delayed/dropped under
+    # platform-wide load) and well spread apart (12h+) for both scheduling
+    # safety and audience-timezone coverage.
+    - cron: '21 14 * * *'   # ~14:21 UTC
+    - cron: '47 3 * * *'    # ~03:47 UTC
   workflow_dispatch:
     inputs:
       theme:
