@@ -5,7 +5,7 @@ Pexels is tried first (often has native vertical 9:16 clips, no cropping
 needed); Pixabay is the fallback (landscape only, always needs a vertical
 crop). Both are free for commercial use with no attribution required.
 """
-import json, pathlib, ssl, subprocess, urllib.parse, urllib.request
+import json, pathlib, random, ssl, subprocess, urllib.parse, urllib.request
 
 try:
     import certifi
@@ -39,13 +39,14 @@ def _pexels_search(topic):
     if not key:
         return None
     q = urllib.parse.quote(f"{topic} underwater ocean")
-    url = f"https://api.pexels.com/videos/search?query={q}&per_page=10&orientation=portrait"
+    url = f"https://api.pexels.com/videos/search?query={q}&per_page=40&orientation=portrait"
     req = urllib.request.Request(url, headers={"Authorization": key, "User-Agent": _UA})
     try:
         data = json.loads(urllib.request.urlopen(req, context=_SSL, timeout=20).read())
     except Exception as exc:
         print(f"[footage] Pexels search failed: {exc}")
-        return None
+        return []
+    out = []
     for v in data.get("videos", []):
         if not (_MIN_DUR <= v.get("duration", 0) <= _MAX_DUR):
             continue
@@ -53,8 +54,9 @@ def _pexels_search(topic):
         files = sorted(v["video_files"], key=lambda f: abs(f.get("width", 0) - 720))
         for f in files:
             if f.get("width", 0) >= 720 and f.get("file_type") == "video/mp4":
-                return f["link"]
-    return None
+                out.append((f"pexels:{v['id']}", f["link"]))
+                break
+    return out
 
 
 def _pixabay_search(topic):
@@ -62,21 +64,23 @@ def _pixabay_search(topic):
     if not key:
         return None
     q = urllib.parse.quote(f"{topic} underwater ocean")
-    url = f"https://pixabay.com/api/videos/?key={key}&q={q}&per_page=10"
+    url = f"https://pixabay.com/api/videos/?key={key}&q={q}&per_page=40"
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         data = json.loads(urllib.request.urlopen(req, context=_SSL, timeout=20).read())
     except Exception as exc:
         print(f"[footage] Pixabay search failed: {exc}")
-        return None
+        return []
+    out = []
     for v in data.get("hits", []):
         if not (_MIN_DUR <= v.get("duration", 0) <= _MAX_DUR):
             continue
         videos = v["videos"]
         for tier in ("medium", "large", "small"):
             if tier in videos:
-                return videos[tier]["url"]
-    return None
+                out.append((f"pixabay:{v['id']}", videos[tier]["url"]))
+                break
+    return out
 
 
 def _normalize_vertical(src_path, dst_path, ff_exe):
@@ -88,17 +92,29 @@ def _normalize_vertical(src_path, dst_path, ff_exe):
     ], check=True, capture_output=True)
 
 
-def fetch_footage(topic, tag, work_dir, ff_exe):
+def _pick(cands, used):
+    """Random choice among clips not yet used. If every candidate is already
+    used, repeat one rather than return no footage at all."""
+    fresh = [c for c in cands if c[0] not in used]
+    return random.choice(fresh or cands) if cands else None
+
+
+def fetch_footage(topic, tag, work_dir, ff_exe, used=None):
     """Returns a local mp4 path, normalized to vertical 720x1280 @24fps, or
-    None if no footage could be found on either provider."""
-    url = _pexels_search(topic)
+    None if no footage could be found on either provider. `used` is a set of
+    clip ids already used (this episode + recent ones); the chosen clip's id
+    is added to it so callers can carry it across segments."""
+    used = used if used is not None else set()
+    pick = _pick(_pexels_search(topic), used)
     source = "pexels"
-    if not url:
-        url = _pixabay_search(topic)
+    if not pick:
+        pick = _pick(_pixabay_search(topic), used)
         source = "pixabay"
-    if not url:
+    if not pick:
         print(f"[footage] No results for '{topic}' on Pexels or Pixabay")
         return None
+    clip_id, url = pick
+    used.add(clip_id)
     raw_path = str(work_dir / f"{tag}_raw.mp4")
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     data = urllib.request.urlopen(req, context=_SSL, timeout=60).read()

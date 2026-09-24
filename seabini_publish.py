@@ -317,7 +317,8 @@ def publish(video_path: str, title: str, language: str = "en",
             objective: str = "a fun ocean discovery",
             series_title: str = SERIES_TITLE,
             narrator: str = "Bini",
-            search_hook: str = "") -> str:
+            search_hook: str = "",
+            footage_ids: list = None) -> str:
     video_url = _upload_release(video_path, title)
 
     manifest, sha = _get_manifest()
@@ -331,6 +332,7 @@ def publish(video_path: str, title: str, language: str = "en",
         "language": language,
         "learning_objective": objective,
         "search_hook": search_hook,
+        "footage_ids": footage_ids or [],
         "video_url": video_url,
         "published_at": datetime.datetime.utcnow().isoformat() + "Z",
     })
@@ -349,4 +351,5 @@ if __name__ == "__main__":
     series_title = sys.argv[5] if len(sys.argv) > 5 else SERIES_TITLE
     narrator = sys.argv[6] if len(sys.argv) > 6 else "Bini"
     search_hook = sys.argv[7] if len(sys.argv) > 7 else ""
-    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator, search_hook))
+    footage_ids = [x for x in (sys.argv[8].split(",") if len(sys.argv) > 8 else []) if x]
+    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator, search_hook, footage_ids))

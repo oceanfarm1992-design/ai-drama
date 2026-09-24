@@ -37,6 +37,20 @@ def _recent_creature():
     return None
 
 
+def _recent_footage_ids(limit=15):
+    """Best-effort: clip ids used by the most recent episodes, so a new
+    episode avoids re-using them. Any failure just means no exclusion."""
+    ids = set()
+    try:
+        data = json.loads(urllib.request.urlopen(_MANIFEST_URL, context=sr._SSL, timeout=10).read())
+        eps = [e for e in data.get("episodes", []) if e.get("series_title") == SERIES_TITLE]
+        for ep in eps[:limit]:
+            ids.update(ep.get("footage_ids", []))
+    except Exception:
+        pass
+    return ids
+
+
 def _pick_theme(theme):
     """The LLM is unreliable at picking a genuinely random creature when
     just asked to "pick any" — it's primed by its own prompt describing
@@ -57,11 +71,13 @@ def build_real_episode(theme, out_path, character="bini"):
 
     segments = [sr._card(f"{character.title()}'s Real Ocean", f"A closer look: {creature}")]
     segment_videos = []
+    recent_clips = _recent_footage_ids()
+    used_clips = set(recent_clips)
     for i, seg in enumerate(episode["segments"]):
         query = seg.get("search_query", creature)
         narration = seg["narration"]
         print(f"  [{seg.get('behavior', '?')}] fetching '{query}' ...")
-        video_path = brf.fetch_footage(query, f"seg{i}", sr.WORK, sr.FF)
+        video_path = brf.fetch_footage(query, f"seg{i}", sr.WORK, sr.FF, used_clips)
         if not video_path:
             print(f"    no footage found, skipping this segment")
             continue
@@ -127,6 +143,7 @@ def build_real_episode(theme, out_path, character="bini"):
     meta = {"title": title, "creature": creature, "series_title": SERIES_TITLE,
              "character": character, "narrator": character.title(),
              "search_hook": episode.get("search_hook", ""),
+             "footage_ids": sorted(used_clips - recent_clips),
              "learning_objective": episode["segments"][0]["narration"] if episode["segments"] else ""}
     with open("episode_meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
