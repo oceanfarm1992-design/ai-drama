@@ -1,0 +1,9 @@
+# Pinned to the set verified together locally (2026-09-24). A surprise
+# upstream release would otherwise break all 5 daily runs at once.
+moviepy==1.0.3
+Pillow==9.5.0          # moviepy 1.0.3 calls Image.ANTIALIAS, removed in Pillow 10
+imageio-ffmpeg==0.6.0
+kokoro-onnx==0.6.1
+onnxruntime==1.29.0
+numpy==2.4.6
+certifi==2026.7.22

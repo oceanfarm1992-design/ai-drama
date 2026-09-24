@@ -1,12 +1,11 @@
-"""Publishes a finished SEABINI episode:
-uploads the video as a GitHub Release asset in ai-drama-showcase (public URL),
-updates manifest.json in ai-drama-showcase via GitHub API, and posts to
+"""Publishes a finished episode: uploads the video as a GitHub Release asset
+(public URL), updates manifest.json via the GitHub API, and posts to
 YouTube / TikTok / Facebook via Buffer's GraphQL API.
 
-Env: GH_TOKEN (SHOWCASE_TOKEN from workflow secrets), BUFFER_API_KEY.
-Run: python seabini_publish.py <video.mp4> "<title>" ["<lang>"] ["<objective>"]
+Env: GH_TOKEN (the workflow's GITHUB_TOKEN), BUFFER_API_KEY.
+Run: python seabini_publish.py <video.mp4> --meta episode_meta.json
 """
-import base64, os, sys, json, datetime, pathlib, subprocess, ssl, urllib.request
+import base64, os, sys, json, datetime, pathlib, ssl, urllib.error, urllib.request
 
 try:
     import certifi
@@ -18,7 +17,6 @@ SERIES_TITLE = "SEABINI"
 REPO = os.environ.get("GITHUB_REPOSITORY", "oceanfarm1992-design/ai-drama-showcase")
 
 # Channel IDs confirmed 2026-09-08 via buffer_channels.py
-_BUFFER_ORG_ID = "6aa0477126e41236abff5ad7"
 _BUFFER_CHANNELS = {
     "youtube":  "6aa047f4cd8b9c702c2e9786",
     "tiktok":   "6aa048c7cd8b9c702c2e9b3b",
@@ -41,10 +39,6 @@ mutation CreatePost($input: CreatePostInput!) {
 """
 
 
-def _run(cmd):
-    subprocess.run(cmd, check=True)
-
-
 def _gh_token():
     raw = os.environ.get("GH_TOKEN") or ""
     return raw.strip().lstrip("﻿")
@@ -55,8 +49,6 @@ def _buffer_key():
     if k:
         return k
     apis = pathlib.Path(__file__).with_name(".APIs.txt")
-    if not apis.exists():
-        apis = pathlib.Path("C:/Calude Apps/AI Drama/.APIs.txt")
     if apis.exists():
         for line in apis.read_text(encoding="utf-8").splitlines():
             if line.lower().startswith("buffer-secret="):
@@ -81,13 +73,6 @@ def _buffer_gql(query, variables):
         print(f"[Buffer] GraphQL error: {exc}")
         return None
 
-
-_YT_TAGS = [
-    "SEABINI", "ocean for kids", "preschool cartoon", "sea animals for kids",
-    "kids ocean show", "underwater cartoon", "toddler learning", "preschool learning",
-    "kids educational video", "ocean adventure", "seahorse cartoon", "kids cartoon",
-    "baby shark alternative", "ocean for toddlers", "animated kids show",
-]
 
 _HASHTAGS_TT = (
     "#SEABINI #kidscartoon #cartoonforkids #kidsanimation #fyp"
@@ -151,14 +136,27 @@ def _captions(title: str, objective: str, series_title: str = "SEABINI", narrato
     return {"youtube": yt_desc, "tiktok": tt_text, "facebook": fb_text}
 
 
+def _video_titles(title: str, series_title: str, search_hook: str) -> tuple:
+    """(youtube_title, tiktok_title). The YouTube title is its strongest
+    search signal, so real-footage episodes lead with the search question."""
+    if series_title == "Bini's Real Ocean":
+        hook = f"{search_hook[0].upper()}{search_hook[1:]}? " if search_hook else ""
+        yt = f"{hook}{title} | Real Ocean for Kids #Shorts"
+        return yt[:100], f"{hook}{title} 🌊"[:90]
+    return (f"SEABINI | {title} 🌊 | Kids Ocean Cartoon | #Shorts"[:100],
+            f"SEABINI | {title} 🌊"[:90])
+
+
 def _buffer_post(channel_id: str, service: str, video_url: str,
-                 captions: dict, title: str):
+                 captions: dict, title: str, series_title: str = SERIES_TITLE,
+                 search_hook: str = "") -> bool:
     text = captions.get(service, captions["youtube"])
     assets = [{"video": {"url": video_url, "metadata": {"title": title}}}]
+    yt_title, tt_title = _video_titles(title, series_title, search_hook)
     metadata = {}
     if service == "youtube":
         metadata["youtube"] = {
-            "title": f"SEABINI | {title} 🌊 | Kids Ocean Cartoon | #Shorts",
+            "title": yt_title,
             "privacy": "public",
             "categoryId": "1",       # Film & Animation
             "madeForKids": True,
@@ -168,7 +166,7 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
         }
     if service == "tiktok":
         metadata["tiktok"] = {
-            "title": f"SEABINI | {title} 🌊",
+            "title": tt_title,
             "isAiGenerated": True,
         }
     if service == "facebook":
@@ -187,26 +185,31 @@ def _buffer_post(channel_id: str, service: str, video_url: str,
         post_input["metadata"] = metadata
 
     resp = _buffer_gql(_CREATE_POST, {"input": post_input})
-    if resp:
-        errs = resp.get("errors")
-        data = (resp.get("data") or {}).get("createPost") or {}
-        typename = data.get("__typename", "")
-        post = data.get("post")
-        err_msg = data.get("message")
-        if errs:
-            print(f"[Buffer:{service}] GraphQL error: {errs}")
-        elif typename == "PostActionSuccess" and post:
-            print(f"[Buffer:{service}] Queued → id={post['id']} status={post['status']}")
-        elif err_msg:
-            print(f"[Buffer:{service}] {typename}: {err_msg}")
-        else:
-            print(f"[Buffer:{service}] Response: {resp}")
+    if not resp:
+        return False
+    errs = resp.get("errors")
+    data = (resp.get("data") or {}).get("createPost") or {}
+    typename = data.get("__typename", "")
+    post = data.get("post")
+    err_msg = data.get("message")
+    if errs:
+        print(f"[Buffer:{service}] GraphQL error: {errs}")
+    elif typename == "PostActionSuccess" and post:
+        print(f"[Buffer:{service}] Queued → id={post['id']} status={post['status']}")
+        return True
+    elif err_msg:
+        print(f"[Buffer:{service}] {typename}: {err_msg}")
+    else:
+        print(f"[Buffer:{service}] Response: {resp}")
+    return False
 
 
-def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI", narrator: str = "Bini", search_hook: str = ""):
+def _post_all_channels(video_url: str, title: str, objective: str, series_title: str = "SEABINI",
+                       narrator: str = "Bini", search_hook: str = "") -> list:
+    """Posts to every channel even if one fails; returns the failed services."""
     caps = _captions(title, objective, series_title, narrator, search_hook)
-    for service, channel_id in _BUFFER_CHANNELS.items():
-        _buffer_post(channel_id, service, video_url, caps, title)
+    return [service for service, channel_id in _BUFFER_CHANNELS.items()
+            if not _buffer_post(channel_id, service, video_url, caps, title, series_title, search_hook)]
 
 
 def _gh_api(method, path, body=None, content_type="application/json"):
@@ -256,7 +259,8 @@ def _upload_release(video_path: str, title: str) -> str:
         asset = json.loads(urllib.request.urlopen(req, context=_SSL_CTX, timeout=300).read())
         print(f"[Release] Uploaded asset: {asset['name']} ({asset['size']} bytes)")
     except urllib.error.HTTPError as exc:
-        print(f"[Release] Asset upload failed: {exc.code} {exc.read().decode(errors='replace')[:300]}")
+        # Stop here: carrying on would post a dead video link to every platform.
+        raise SystemExit(f"[Release] Asset upload failed: {exc.code} {exc.read().decode(errors='replace')[:300]}")
 
     return f"https://github.com/{REPO}/releases/download/{tag}/{filename}"
 
@@ -273,11 +277,13 @@ def _get_manifest():
     })
     try:
         resp = json.loads(urllib.request.urlopen(req, context=_SSL_CTX, timeout=15).read())
-        content = base64.b64decode(resp["content"]).decode("utf-8")
-        return json.loads(content), resp["sha"]
-    except Exception as exc:
-        print(f"[Manifest] Could not fetch existing manifest ({exc}), starting fresh.")
-        return {"episodes": []}, None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            print("[Manifest] No manifest yet, starting fresh.")
+            return {"episodes": []}, None
+        raise
+    content = base64.b64decode(resp["content"]).decode("utf-8")
+    return json.loads(content), resp["sha"]
 
 
 def _put_manifest(manifest_data: dict, title: str, sha=None):
@@ -306,11 +312,8 @@ def _put_manifest(manifest_data: dict, title: str, sha=None):
         },
         method="PUT",
     )
-    try:
-        urllib.request.urlopen(req, context=_SSL_CTX, timeout=15)
-        print(f"[Manifest] Updated in {REPO}")
-    except Exception as exc:
-        print(f"[Manifest] API error: {exc}")
+    urllib.request.urlopen(req, context=_SSL_CTX, timeout=15)
+    print(f"[Manifest] Updated in {REPO}")
 
 
 def publish(video_path: str, title: str, language: str = "en",
@@ -318,38 +321,51 @@ def publish(video_path: str, title: str, language: str = "en",
             series_title: str = SERIES_TITLE,
             narrator: str = "Bini",
             search_hook: str = "",
-            footage_ids: list = None) -> str:
+            footage_ids: list = None,
+            creature: str = "") -> str:
     video_url = _upload_release(video_path, title)
 
-    manifest, sha = _get_manifest()
-    episode_number = sum(1 for e in manifest["episodes"] if e.get("series_title") == series_title) + 1
-    manifest["episodes"].insert(0, {
+    entry = {
         "series_title": series_title,
         "title": title,
         "narrator": narrator,
-        "episode_number": episode_number,
-        "series_length": episode_number,
+        "creature": creature,
         "language": language,
         "learning_objective": objective,
         "search_hook": search_hook,
         "footage_ids": footage_ids or [],
         "video_url": video_url,
         "published_at": datetime.datetime.utcnow().isoformat() + "Z",
-    })
-    _put_manifest(manifest, title, sha)
+    }
+    for attempt in range(3):  # retry if another run updated the manifest meanwhile
+        manifest, sha = _get_manifest()
+        n = sum(1 for e in manifest["episodes"] if e.get("series_title") == series_title) + 1
+        manifest["episodes"].insert(0, dict(entry, episode_number=n, series_length=n))
+        try:
+            _put_manifest(manifest, title, sha)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (409, 422) or attempt == 2:
+                raise
+            print(f"[Manifest] Conflict ({exc.code}), retrying...")
 
-    _post_all_channels(video_url, title, objective, series_title, narrator, search_hook)
-
+    failed = _post_all_channels(video_url, title, objective, series_title, narrator, search_hook)
+    if failed:
+        raise SystemExit(f"[Buffer] Posting failed for: {', '.join(failed)}")
     return video_url
 
 
 if __name__ == "__main__":
     video = sys.argv[1]
-    title = sys.argv[2] if len(sys.argv) > 2 else "SEABINI Short"
-    language = sys.argv[3] if len(sys.argv) > 3 else "en"
-    objective = sys.argv[4] if len(sys.argv) > 4 else "a fun ocean discovery"
-    series_title = sys.argv[5] if len(sys.argv) > 5 else SERIES_TITLE
-    narrator = sys.argv[6] if len(sys.argv) > 6 else "Bini"
-    search_hook = sys.argv[7] if len(sys.argv) > 7 else ""
-    footage_ids = [x for x in (sys.argv[8].split(",") if len(sys.argv) > 8 else []) if x]
-    print("PUBLISHED:", publish(video, title, language, objective, series_title, narrator, search_hook, footage_ids))
+    if len(sys.argv) > 3 and sys.argv[2] == "--meta":
+        m = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
+        print("PUBLISHED:", publish(video, m["title"], "en", m.get("learning_objective", ""),
+                                    m.get("series_title", SERIES_TITLE), m.get("narrator", "Bini"),
+                                    m.get("search_hook", ""), m.get("footage_ids", []),
+                                    m.get("creature", "")))
+    else:  # legacy positional form, still used by the (disabled) SEABINI workflow
+        title = sys.argv[2] if len(sys.argv) > 2 else "SEABINI Short"
+        language = sys.argv[3] if len(sys.argv) > 3 else "en"
+        objective = sys.argv[4] if len(sys.argv) > 4 else "a fun ocean discovery"
+        series_title = sys.argv[5] if len(sys.argv) > 5 else SERIES_TITLE
+        print("PUBLISHED:", publish(video, title, language, objective, series_title))

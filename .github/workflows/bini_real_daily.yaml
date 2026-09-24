@@ -26,6 +26,12 @@ on:
 permissions:
   contents: write
 
+# One run at a time: a manual run overlapping a scheduled one would otherwise
+# race on manifest.json. Later runs wait in line instead of being cancelled.
+concurrency:
+  group: real-ocean-publish
+  cancel-in-progress: false
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
@@ -82,7 +88,7 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install --quiet moviepy==1.0.3 "pillow<10" imageio-ffmpeg "kokoro-onnx>=0.6.0"
+          pip install --quiet -r requirements.txt
 
       - name: Render episode
         env:
@@ -102,14 +108,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
         run: |
-          TITLE=$(python -c "import json; print(json.load(open('episode_meta.json'))['title'])" 2>/dev/null || echo "Bini's Real Ocean")
-          OBJ=$(python -c "import json; print(json.load(open('episode_meta.json'))['learning_objective'])" 2>/dev/null || echo "a real look at ocean life")
-          SERIES=$(python -c "import json; print(json.load(open('episode_meta.json'))['series_title'])" 2>/dev/null || echo "Bini's Real Ocean")
-          NARRATOR=$(python -c "import json; print(json.load(open('episode_meta.json'))['narrator'])" 2>/dev/null || echo "Bini")
-          HOOK=$(python -c "import json; print(json.load(open('episode_meta.json')).get('search_hook',''))" 2>/dev/null || echo "")
-          CLIPS=$(python -c "import json; print(','.join(json.load(open('episode_meta.json')).get('footage_ids',[])))" 2>/dev/null || echo "")
-          echo "Episode: $TITLE | $OBJ | narrator=$NARRATOR | hook=$HOOK | clips=$CLIPS"
-          python seabini_publish.py episode.mp4 "$TITLE" en "$OBJ" "$SERIES" "$NARRATOR" "$HOOK" "$CLIPS"
+          cat episode_meta.json
+          python seabini_publish.py episode.mp4 --meta episode_meta.json
 
       - name: Upload episode as workflow artifact (backup)
         uses: actions/upload-artifact@v4
