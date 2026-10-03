@@ -11,10 +11,15 @@ import os, sys, json, urllib.request, pathlib
 
 import seabini_script as ss  # reuse _openai_key() and the verified creature facts
 
+# Each has 10+ free stock clips whose Pexels/Pixabay metadata actually names it
+# (checked 2026-09-24); gentle animals only, no sharks-that-bite/orcas/eels.
 CREATURES = [
     "jellyfish", "crab", "starfish", "octopus", "seahorse", "clownfish",
-    "sea turtle", "dolphin", "coral", "sea anemone",
+    "sea turtle", "dolphin", "coral", "sea anemone", "penguin", "seal",
+    "sea lion", "stingray", "manta ray", "whale shark", "whale", "pelican",
+    "shrimp", "sea urchin", "squid", "cuttlefish",
 ]
+_MIN_NARRATION_WORDS = 45  # ~20s of speech; below this episodes felt too thin (one was 15s)
 
 # Personality profiles reused from seabini_script.py's CHARACTERS bible, so
 # each narrator sounds like themselves rather than a generic reskin of Bini.
@@ -95,6 +100,28 @@ Return ONLY JSON in this exact shape:
 The "segments" array must have exactly 3 or 4 entries."""
 
 
+def _problems(ep: dict, include_song: bool) -> list:
+    """Why an LLM episode is unusable ([] if it's fine). Checked before any
+    rendering so a malformed script fails fast instead of mid-render."""
+    probs = []
+    for key in ("creature", "title", "search_hook"):
+        if not isinstance(ep.get(key), str) or not ep[key].strip():
+            probs.append(f"missing {key}")
+    segs = ep.get("segments")
+    if not isinstance(segs, list) or not 3 <= len(segs) <= 4:
+        return probs + ["segments must be a list of 3-4"]
+    for i, s in enumerate(segs):
+        for key in ("behavior", "search_query", "narration"):
+            if not isinstance(s, dict) or not isinstance(s.get(key), str) or not s[key].strip():
+                probs.append(f"segment {i} missing {key}")
+    words = sum(len(s.get("narration", "").split()) for s in segs if isinstance(s, dict))
+    if words < _MIN_NARRATION_WORDS:
+        probs.append(f"narration only {words} words (need {_MIN_NARRATION_WORDS}+)")
+    if include_song and len(((ep.get("song") or {}).get("lyrics") or "")) < 150:
+        probs.append("song lyrics missing or too short")
+    return probs
+
+
 def generate_real_episode(theme: str = "", character: str = "bini", include_song: bool = None) -> dict:
     if include_song is None:
         include_song = (character == "bini")
@@ -109,13 +136,24 @@ def generate_real_episode(theme: str = "", character: str = "bini", include_song
         "messages": [{"role": "system", "content": _build_system(character, include_song)},
                      {"role": "user", "content": user}],
     }
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {ss._openai_key()}", "Content-Type": "application/json"},
-    )
-    resp = json.load(urllib.request.urlopen(req))
-    return json.loads(resp["choices"][0]["message"]["content"])
+    probs = []
+    for attempt in range(3):
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {ss._openai_key()}", "Content-Type": "application/json"},
+        )
+        try:
+            resp = json.load(urllib.request.urlopen(req, timeout=60))
+            ep = json.loads(resp["choices"][0]["message"]["content"])
+        except Exception as exc:
+            probs = [f"request/parse failed: {exc}"]
+        else:
+            probs = _problems(ep, include_song)
+            if not probs:
+                return ep
+        print(f"[script] attempt {attempt + 1} unusable: {'; '.join(probs)}")
+    raise SystemExit(f"Script generation failed after 3 attempts: {'; '.join(probs)}")
 
 
 if __name__ == "__main__":

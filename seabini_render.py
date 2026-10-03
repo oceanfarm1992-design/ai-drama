@@ -34,11 +34,11 @@ VMAP = {"A": "closed", "X": "closed", "B": "mid", "G": "mid", "H": "mid", "C": "
 # push it toward a baby/funny character read (user-approved anchor: bini at
 # pitch=1.35, post_speed=0.85 — others scaled proportionally from the old table).
 CHARACTERS = {
-    "bini": dict(base="bini_base.png", cx=180, cy=284, lip=(222, 106, 114), dark=(58, 16, 24), tongue=(239, 130, 140), ms=1.0, erase_mult=1.0, face_pt=(180, 262), eye_l=(126, 235), eye_r=(248, 232), blink_ready=True, pitch=1.28, speed=0.86, kokoro_voice="af_heart", kokoro_speed=1.0, kokoro_pitch=1.35, kokoro_post_speed=0.85),
-    "tula": dict(base="tula_base.png", cx=216, cy=303, lip=(120, 140, 70), dark=(58, 18, 20), tongue=(185, 70, 68), ms=1.2, erase_mult=1.15, face_pt=(216, 282), eye_l=(149, 210), eye_r=(284, 212), blink_ready=False, pitch=1.05, speed=0.82, kokoro_voice="af_bella", kokoro_speed=1.0, kokoro_pitch=1.11, kokoro_post_speed=0.81),
-    "ollo": dict(base="ollo_base.png", cx=275, cy=262, lip=(133, 81, 189), dark=(50, 12, 22), tongue=(150, 55, 60), ms=1.15, erase_mult=1.15, face_pt=(275, 240), eye_l=(169, 174), eye_r=(367, 171), blink_ready=False, pitch=1.15, speed=0.95, kokoro_voice="bf_emma", kokoro_speed=1.0, kokoro_pitch=1.21, kokoro_post_speed=0.94),
-    "dodo": dict(base="dodo_base.png", cx=188, cy=235, lip=(110, 170, 200), dark=(55, 24, 28), tongue=(160, 65, 68), ms=1.4, erase_mult=1.7, face_pt=(188, 180), eye_l=(106, 139), eye_r=(251, 141), blink_ready=False, pitch=1.20, speed=1.04, kokoro_voice="am_fenrir", kokoro_speed=1.0, kokoro_pitch=1.27, kokoro_post_speed=1.03),
-    "pipi": dict(base="pipi_base.png", cx=165, cy=266, lip=(234, 159, 66), dark=(60, 26, 32), tongue=(170, 68, 72), ms=0.9, erase_mult=1.15, face_pt=(165, 240), eye_l=(64, 195), eye_r=(259, 197), blink_ready=False, pitch=1.35, speed=0.92, kokoro_voice="af_nicole", kokoro_speed=1.0, kokoro_pitch=1.42, kokoro_post_speed=0.91),
+    "bini": dict(base="bini_base.png", cx=180, cy=284, lip=(222, 106, 114), dark=(58, 16, 24), tongue=(239, 130, 140), ms=1.0, erase_mult=1.0, face_pt=(180, 262), eyes=((125, 232, 28, 27), (247, 230, 26, 29)), blink_ready=True, look_ready=True, pitch=1.28, speed=0.86, kokoro_voice="af_heart", kokoro_speed=1.0, kokoro_pitch=1.35, kokoro_post_speed=0.85),
+    "tula": dict(base="tula_base.png", cx=216, cy=303, lip=(120, 140, 70), dark=(58, 18, 20), tongue=(185, 70, 68), ms=1.2, erase_mult=1.15, face_pt=(216, 282), eyes=((137, 202, 43, 45), (296, 203, 39, 44)), blink_ready=True, look_ready=True, pitch=1.05, speed=0.82, kokoro_voice="af_bella", kokoro_speed=1.0, kokoro_pitch=1.11, kokoro_post_speed=0.81),
+    "ollo": dict(base="ollo_base.png", cx=275, cy=262, lip=(133, 81, 189), dark=(50, 12, 22), tongue=(150, 55, 60), ms=1.15, erase_mult=1.15, face_pt=(275, 240), eyes=((197, 168, 40, 45), (348, 165, 34, 46)), blink_ready=True, look_ready=True, pitch=1.15, speed=0.95, kokoro_voice="bf_emma", kokoro_speed=1.0, kokoro_pitch=1.21, kokoro_post_speed=0.94),
+    "dodo": dict(base="dodo_base.png", cx=188, cy=235, lip=(110, 170, 200), dark=(55, 24, 28), tongue=(160, 65, 68), ms=1.4, erase_mult=1.7, face_pt=(188, 180), eyes=((100, 138, 30, 40), (268, 139, 31, 41)), blink_ready=True, look_ready=True, pitch=1.20, speed=1.04, kokoro_voice="am_fenrir", kokoro_speed=1.0, kokoro_pitch=1.27, kokoro_post_speed=1.03),
+    "pipi": dict(base="pipi_base.png", cx=165, cy=266, lip=(234, 159, 66), dark=(60, 26, 32), tongue=(170, 68, 72), ms=0.9, erase_mult=1.15, face_pt=(165, 240), eyes=((96, 197, 39, 41), (246, 197, 41, 41)), blink_ready=True, look_ready=True, pitch=1.35, speed=0.92, kokoro_voice="af_nicole", kokoro_speed=1.0, kokoro_pitch=1.42, kokoro_post_speed=0.91),
 }
 VOICE_ID = "MF3mGyEYCl7XYWbV9V6O"  # ElevenLabs "Elli"; pitch/speed per character above
 LOC_BG = {"rainbow reef": "reef.png", "seagrass garden": "seagrass.png", "shell beach": "starfish.png",
@@ -218,31 +218,138 @@ _EYELID_COLOR = (40, 40, 46)  # neutral near-black; each character's own
                                 # "dark" is tuned for mouth interior (often a
                                 # warm maroon), which reads wrong on eyelids
 
+_BLINK_PAD = 15     # px beyond the eye white, so the dark outline is covered too
+_BLINK_FEATHER = 4
+
+def _skin_around(h, cx, cy, rx, ry):
+    """Median colour of a ring of pixels just outside the eye (upper half
+    skipped, since brows/eyelid shadow live there), i.e. the face's own skin."""
+    pts = []
+    for k in range(24):
+        a = math.pi * k / 23  # lower half-circle only
+        for scale in (1.12, 1.25):
+            x = int(cx + rx * scale * math.cos(a)); y = int(cy + ry * scale * math.sin(a))
+            if 0 <= x < h.width and 0 <= y < h.height and h.getpixel((x, y))[3] > 200:
+                pts.append(h.getpixel((x, y))[:3])
+    if not pts:
+        return h.getpixel((cx, cy))[:3]
+    return tuple(sorted(p[i] for p in pts)[len(pts) // 2] for i in range(3))
+
 def _blink_frame(head, ch):
     """Returns a copy of an already mouth-composited head with both eyes
-    replaced by a closed-eyelid line, using the same gradient-fill erase
-    technique _build_heads uses for the mouth (sample skin tone just above/
-    below the patch so the erase blends instead of leaving a flat blob).
-    Patch base size is measured against Bini's ~50x55px eye whites (ms=1.0),
-    then scaled by the character's own `ms` (mouth-scale) as a proxy for
-    overall facial-feature size, since bigger-mouthed characters (dodo,
-    ollo, tula) also draw with proportionally bigger eyes."""
-    es = ch["ms"]  # eye-patch scale, piggybacking on the existing per-character mouth scale
-    hw, hh = int(34 * es), int(34 * es)
+    replaced by a closed-eyelid curve. Each eye's calibrated ellipse
+    (`eyes`: (cx, cy, rx, ry) in TH-scaled space) is painted over with the
+    surrounding skin tone (feathered so it blends), then a lid line is drawn."""
     h = head.copy()
-    for (ex, ey) in (ch["eye_l"], ch["eye_r"]):
-        ex0, ey0, ex1, ey1 = ex-hw, ey-hh, ex+hw, ey+hh
-        top_c = h.getpixel((ex, max(0, ey0-4)))[:3]
-        bot_c = h.getpixel((ex, min(h.height-1, ey1+4)))[:3]
-        patch = Image.new("RGB", (ex1-ex0, ey1-ey0))
-        for row in range(patch.height):
-            f = row/max(1, patch.height-1); col = tuple(int(top_c[i]+(bot_c[i]-top_c[i])*f) for i in range(3))
-            ImageDraw.Draw(patch).line((0, row, patch.width, row), fill=col)
-        m = Image.new("L", patch.size, 0); ImageDraw.Draw(m).ellipse((0, 0, patch.width, patch.height), fill=255)
-        layer = Image.new("RGBA", h.size, (0, 0, 0, 0)); layer.paste(patch, (ex0, ey0), m.filter(ImageFilter.GaussianBlur(3)))
-        h.alpha_composite(layer)
-        aw, ah = int(24 * es), int(8 * es)
-        ImageDraw.Draw(h).arc((ex-aw, ey-ah, ex+aw, ey+int(12*es)), 15, 165, fill=_EYELID_COLOR, width=3)
+    m_pad = _BLINK_FEATHER * 3
+    for (cx, cy, rx, ry) in ch["eyes"]:
+        skin = _skin_around(head, cx, cy, rx + _BLINK_PAD, ry + _BLINK_PAD)
+        rx2, ry2 = rx + _BLINK_PAD, ry + _BLINK_PAD
+        size = (2 * (rx2 + m_pad), 2 * (ry2 + m_pad))
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).ellipse((m_pad, m_pad, size[0] - m_pad, size[1] - m_pad), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(_BLINK_FEATHER))
+        patch = Image.new("RGBA", size, skin + (255,))
+        patch.putalpha(mask)  # alpha carries the feather; pasting through a mask would darken the edge
+        h.alpha_composite(patch, (cx - rx2 - m_pad, cy - ry2 - m_pad))
+        aw = int(rx * 0.8)
+        ImageDraw.Draw(h).arc((cx - aw, cy - int(ry * 0.3), cx + aw, cy + int(ry * 0.3)), 15, 165,
+                              fill=_EYELID_COLOR, width=max(3, rx // 10))
+    return h
+
+# --- Gaze: the iris/pupil drifts around inside each eye ---------------------
+_LOOK_X, _LOOK_Y = 0.16, 0.08      # max iris travel, as a fraction of eye radius
+_LOOK_INNER = 0.9                  # repaint only inside this much of the eye, keeping its outline
+_SACCADE = 0.12                    # seconds to move between gaze targets (eyes dart, not glide)
+_GAZE_TARGETS = [(0, 0), (0, 0), (-1, 0), (1, 0), (-0.8, -0.8), (0.8, -0.8), (-0.6, 0.6), (0.6, 0.6)]
+_EYE_RIG = {}
+
+def _is_sclera(px):
+    r, g, b = px[:3]
+    return min(r, g, b) > 170 and max(r, g, b) - min(r, g, b) < 60
+
+def _eye_rig(head, ch):
+    """Per character (cached): for each eye, a 'blank' plate with the iris
+    painted out in sclera white, plus the iris itself as a round RGBA layer
+    (highlight included) that _look_frame slides around. The iris disc is
+    the centroid/area of the non-white pixels inside the eye. The eye
+    region is untouched by the mouth rig, so any mouth variant works."""
+    key = ch["base"]
+    if key in _EYE_RIG:
+        return _EYE_RIG[key]
+    rig = []
+    for (cx, cy, rx, ry) in ch["eyes"]:
+        box = (cx - rx, cy - ry, cx + rx, cy + ry)
+        crop = head.crop(box)
+        inner = Image.new("L", crop.size, 0)
+        irx, iry = rx * _LOOK_INNER, ry * _LOOK_INNER
+        ImageDraw.Draw(inner).ellipse((rx - irx, ry - iry, rx + irx, ry + iry), fill=255)
+        px, ipx = crop.load(), inner.load()
+        whites, dark = [], []
+        for y in range(crop.height):
+            for x in range(crop.width):
+                if not ipx[x, y]:
+                    continue
+                if _is_sclera(px[x, y]):
+                    whites.append(px[x, y][:3])
+                else:
+                    dark.append((x, y))
+        if not dark or not whites:
+            rig.append(None)
+            continue
+        icx = sum(p[0] for p in dark) / len(dark)
+        icy = sum(p[1] for p in dark) / len(dark)
+        ir = (len(dark) / math.pi) ** 0.5 * 1.08  # a touch wider: the highlight isn't counted as iris
+        sclera = tuple(sorted(c[i] for c in whites)[len(whites) // 2] for i in range(3))
+        disc = Image.new("L", crop.size, 0)
+        ImageDraw.Draw(disc).ellipse((icx - ir, icy - ir, icx + ir, icy + ir), fill=255)
+        disc = disc.filter(ImageFilter.GaussianBlur(1))
+        iris = Image.new("RGBA", crop.size, (0, 0, 0, 0))
+        iris.paste(crop, (0, 0), disc)
+        plate = crop.copy()
+        plate.paste(Image.new("RGBA", crop.size, sclera + (255,)), (0, 0), disc)
+        rig.append(dict(box=box, plate=plate, iris=iris, inner=inner.filter(ImageFilter.GaussianBlur(1)),
+                        span=(rx * _LOOK_X, ry * _LOOK_Y)))
+    _EYE_RIG[key] = rig
+    return rig
+
+def _gaze_schedule(dur, seed):
+    """Deterministic list of (start_time, (gx, gy)) gaze targets in [-1, 1]:
+    the eyes hold each spot for 1.2-3s, returning to centre most often."""
+    rnd = random.Random(seed + 2)
+    sched, t, last = [(0.0, (0, 0))], rnd.uniform(1.0, 2.2), (0, 0)
+    while t < dur:
+        target = rnd.choice([g for g in _GAZE_TARGETS if g != last])
+        sched.append((t, target))
+        last = target
+        t += rnd.uniform(1.2, 3.0)
+    return sched
+
+def _gaze_at(t, sched):
+    idx = max(i for i, (st, _) in enumerate(sched) if st <= t) if sched else 0
+    st, (gx, gy) = sched[idx]
+    if idx == 0 or t - st >= _SACCADE:
+        return gx, gy
+    px, py = sched[idx - 1][1]
+    f = (t - st) / _SACCADE
+    f = f * f * (3 - 2 * f)  # smoothstep
+    return px + (gx - px) * f, py + (gy - py) * f
+
+def _look_frame(head, ch, gaze):
+    """Copy of `head` with each iris shifted toward `gaze` (gx, gy in [-1, 1]),
+    clipped to the eye so it never spills onto the face."""
+    gx, gy = gaze
+    if gx == 0 and gy == 0:
+        return head
+    h = head.copy()
+    for eye in _eye_rig(head, ch):
+        if eye is None:
+            continue
+        sx, sy = eye["span"]
+        eye_img = eye["plate"].copy()
+        eye_img.alpha_composite(eye["iris"].transform(eye["iris"].size, Image.AFFINE, (1, 0, -gx * sx, 0, 1, -gy * sy),
+                                                      resample=Image.BILINEAR))
+        h.paste(eye_img, eye["box"][:2], eye["inner"])
     return h
 
 def _blink_times(dur, seed):
@@ -400,9 +507,9 @@ def _dance_scene(song_wav, tag, bg_override=None):
         frames.append(np.array(win.convert("RGB")))
     return frames, song_wav
 
-def _card(title, sub, dur=1.8, title_size=None):
+def _card(title, sub, dur=1.8, title_size=None, character="bini"):
     bg, bgx, bgy = _prep_bg(bg_for("Rainbow Reef")); frame0 = bg.crop((bgx, bgy, bgx+W, bgy+H)).convert("RGBA")
-    head = Image.open(str(ASSET / "characters" / "bini_base.png")).convert("RGBA")
+    head = Image.open(str(ASSET / "characters" / CHARACTERS[character]["base"])).convert("RGBA")
     s = (TH*0.9)/head.height; head = head.resize((int(head.width*s), int(TH*0.9)))
     # Auto-shrink long titles ("SEABINI" fits fine at 118; longer titles like
     # "Bini's Real Ocean" need a smaller size or they clip past frame edges.
