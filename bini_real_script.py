@@ -89,7 +89,7 @@ whether the algorithm surfaces the video to people actively searching):
 Return ONLY JSON in this exact shape:
 {{
   "creature": "the creature name, lowercase, simple (e.g. \\"jellyfish\\")",
-  "title": "short episode title, e.g. \\"Jellyfish: A Closer Look\\"",
+  "title": "short, specific title naming this episode's standout behaviour or fact, e.g. \\"Why Jellyfish Glow\\" (never generic like \\"A Closer Look\\")",
   "search_hook": "the search-style question, e.g. \\"why do jellyfish glow in the dark\\"",
   "segments": [
     {{"behavior": "short behavior label, e.g. swimming",
@@ -117,18 +117,27 @@ def _problems(ep: dict, include_song: bool) -> list:
     words = sum(len(s.get("narration", "").split()) for s in segs if isinstance(s, dict))
     if words < _MIN_NARRATION_WORDS:
         probs.append(f"narration only {words} words (need {_MIN_NARRATION_WORDS}+)")
+    if "closer look" in str(ep.get("title", "")).lower():
+        probs.append("generic title")
     if include_song and len(((ep.get("song") or {}).get("lyrics") or "")) < 150:
         probs.append("song lyrics missing or too short")
     return probs
 
 
-def generate_real_episode(theme: str = "", character: str = "bini", include_song: bool = None) -> dict:
+def generate_real_episode(theme: str = "", character: str = "bini", include_song: bool = None,
+                          avoid: list = None) -> dict:
     if include_song is None:
         include_song = (character == "bini")
     creature_hint = ", ".join(CREATURES)
     user = (f"Write today's Bini's Real Ocean episode. Theme/creature seed: {theme}.\n"
             if theme else
             f"Write today's Bini's Real Ocean episode about any one of these (or a similar) sea creature: {creature_hint}.\n")
+    if avoid:
+        # The same creature comes round every few days; without this the LLM
+        # writes near-identical episodes ("Shrimp: A Closer Look" three times).
+        user += ("Earlier episodes about this creature already used these titles/hooks. Pick DIFFERENT "
+                 "behaviours and a different headline fact, and don't reuse these titles:\n- "
+                 + "\n- ".join(avoid[:12]) + "\n")
     body = {
         "model": "gpt-4o-mini",
         "response_format": {"type": "json_object"},
@@ -154,6 +163,40 @@ def generate_real_episode(theme: str = "", character: str = "bini", include_song
                 return ep
         print(f"[script] attempt {attempt + 1} unusable: {'; '.join(probs)}")
     raise SystemExit(f"Script generation failed after 3 attempts: {'; '.join(probs)}")
+
+
+def match_narration(episode: dict, clips: list, character: str) -> list:
+    """Rewrites each kept segment's narration so it talks about what its
+    clip really shows (`clips`: [(segment, shows)]). The script is written
+    before the footage exists, so without this a "curling its tail" line can
+    play over a seahorse that is just floating. Falls back to the original."""
+    lines = [{"behavior": seg["behavior"], "planned_narration": seg["narration"], "clip_shows": shows}
+             for seg, shows in clips]
+    system = (f"You narrate a preschool (ages 2-6) nature short as {CHARACTER_PROFILES[character]} "
+              f"Topic creature: {episode['creature']}. The episode answers: \"{episode.get('search_hook', '')}\". "
+              "For each clip, rewrite the planned narration as 2 short, warm sentences in the narrator's "
+              "voice: first react to what the clip ACTUALLY shows (never claim it shows something it "
+              "doesn't), then keep the planned fun fact as a general statement (e.g. \"Sea turtles love "
+              "to munch on seagrass!\"), so the episode still teaches it. Facts must be true and simple. "
+              "Never mention cameras, footage, clips or videos. "
+              'Return JSON: {"narrations": ["...", ...]} with exactly one entry per clip, in order.')
+    body = {"model": "gpt-4o-mini", "response_format": {"type": "json_object"}, "temperature": 0.7,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": json.dumps(lines, ensure_ascii=False)}]}
+    original = [seg["narration"] for seg, _ in clips]
+    try:
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions", data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {ss._openai_key()}", "Content-Type": "application/json"})
+        out = json.loads(json.load(urllib.request.urlopen(req, timeout=60))["choices"][0]["message"]["content"])
+        new = out.get("narrations")
+        if (isinstance(new, list) and len(new) == len(original)
+                and all(isinstance(n, str) and len(n.split()) >= 8 for n in new)):
+            return new
+        print("[script] narration rewrite malformed, keeping original lines")
+    except Exception as exc:
+        print(f"[script] narration rewrite failed ({exc}), keeping original lines")
+    return original
 
 
 if __name__ == "__main__":
